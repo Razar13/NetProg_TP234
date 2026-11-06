@@ -21,6 +21,8 @@ typedef struct sockaddr_in SOCKADDR_IN;
 typedef struct sockaddr SOCKADDR;
 typedef struct in_addr IN_ADDR;
 
+
+
 #else
 
 #error not defined for this platform
@@ -35,12 +37,20 @@ typedef struct in_addr IN_ADDR;
 
 #include "client2.h"
 
+typedef struct{
+    int tour;
+    int plateau[12];
+    Client joueurs[2];
+    int direction;
+    int score[2];
+}Jeu;
+
 static void init(void);
 static void end(void);
 static void app(void);
 static int init_connection(void);
 static void end_connection(int sock);
-void update(int* plateau, int num);
+void update(int* plateau, int num, int* score, int tour);
 static int read_client(SOCKET sock, char *buffer);
 static void write_client(SOCKET sock, const char *buffer);
 static void send_message_to_all_clients(int* plateau, Client *clients, Client client, int actual, const char *buffer, char from_server);

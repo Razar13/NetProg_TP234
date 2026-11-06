@@ -46,15 +46,18 @@ static void app(void)
 
 
    // Plateau
-   char joueur[BUF_SIZE] = "Gerard";
-   int plateau[12];
+   Jeu jeu;
+   jeu.tour = 0;
+   jeu.score[0] = 0;
+   jeu.score[1] = 0;
+   jeu.direction = 0;
 
    int i;
 
 
    for(i = 0; i < 12; i++)
    {
-      plateau[i] = 4;
+      jeu.plateau[i] = 4;
    }
 
    while(1)
@@ -114,6 +117,9 @@ static void app(void)
          Client c = { csock };
          strncpy(c.name, buffer, BUF_SIZE - 1);
          clients[actual] = c;
+         if(actual < 2){
+            jeu.joueurs[actual] = c;
+         }
          actual++;
       }
       else
@@ -133,28 +139,39 @@ static void app(void)
                   remove_client(clients, i, &actual);
                   strncpy(buffer, client.name, BUF_SIZE - 1);
                   strncat(buffer, " disconnected !", BUF_SIZE - strlen(buffer) - 1);
-                  send_message_to_all_clients(plateau, clients, client, actual, buffer, 1);
+                  send_message_to_all_clients(jeu, clients, client, actual, buffer, 1);
                }
                else
                {
                   int num = atoi(buffer);
 
-                  
 
-                  
                   if(num > 0 && num < 13){
 
-                     if(strcmp(joueur, client.name) == 0){
+
+                     if(strcmp(jeu.joueurs[jeu.tour].name, client.name) != 0){
                         strncpy(buffer, "C'est pas ton tour :( !", BUF_SIZE - 1);
                      }
+
                      else{
-                        strncpy(joueur, client.name, BUF_SIZE - 1);;
-                        update(plateau, num);
+
+                        if(jeu.tour == 0 && num < 7){
+                           jeu.tour = 1;
+                           update(jeu.plateau, num, jeu.score, jeu.tour);
+                        }
+
+                        else if(jeu.tour == 1 && num >= 7){
+                           jeu.tour = 0;
+                           update(jeu.plateau, num, jeu.score, jeu.tour);
+                        }
+                        else{ 
+                           strncpy(buffer, "Joue chez toi stp !", BUF_SIZE - 1);
+                        }
                      }
 
                   }
 
-                  send_message_to_all_clients(plateau, clients, client, actual, buffer, 0);
+                  send_message_to_all_clients(jeu, clients, client, actual, buffer, 0);
                }
                break;
             }
@@ -167,7 +184,7 @@ static void app(void)
 }
 
 
-void update(int* plateau, int num){
+void update(int* plateau, int num, int* score, int tour){
    int nb_cailloux = plateau[num-1];
    int i = 0;
    int j = num-1;
@@ -191,6 +208,7 @@ void update(int* plateau, int num){
       
 
       if(plateau[j] == 2 || plateau[j] == 3){
+         score[tour] += plateau[j];
          plateau[j] = 0;
       }
       else{
@@ -228,20 +246,20 @@ static void remove_client(Client *clients, int to_remove, int *actual)
    (*actual)--;
 }
 
-static void send_message_to_all_clients(int* plateau, Client *clients, Client sender, int actual, const char *buffer, char from_server)
+static void send_message_to_all_clients(Jeu jeu, Client *clients, Client sender, int actual, const char *buffer, char from_server)
 {
    int i = 0,j = 0;
 
-   char jeu[BUF_SIZE];
+   char jeu_str[BUF_SIZE];
 
 
 
    while(i<6){
-      jeu[j++] = plateau[i] + '0';
-      jeu[j++] = ' ';
+      jeu_str[j++] = plateau[i] + '0';
+      jeu_str[j++] = ' ';
 
       if(i == 5){
-         jeu[j++] = '\n';
+         jeu_str[j++] = '\n';
       }
 
       i++;
@@ -250,8 +268,8 @@ static void send_message_to_all_clients(int* plateau, Client *clients, Client se
    i = 0;
 
    while(i<6){
-      jeu[j++] = plateau[11 - i] + '0';
-      jeu[j++] = ' ';
+      jeu_str[j++] = plateau[11 - i] + '0';
+      jeu_str[j++] = ' ';
 
       i++;
    }
@@ -272,11 +290,11 @@ static void send_message_to_all_clients(int* plateau, Client *clients, Client se
          }
          strncat(message, buffer, sizeof message - strlen(message) - 1);
          strncat(message, "\n", sizeof message - strlen(message) - 1);
-         strncat(message, jeu, BUF_SIZE - 1);
+         strncat(message, jeu_str, BUF_SIZE - 1);
          strncat(message, "\n", sizeof message - strlen(message) - 1);
       }
       else{
-         strncpy(message, jeu, BUF_SIZE - 1);
+         strncpy(message, jeu_str, BUF_SIZE - 1);
          strncat(message, "\n", sizeof message - strlen(message) - 1);
       }
 
