@@ -8,9 +8,6 @@
 
 
 
-
-
-
 static void init(void)
 {
 #ifdef WIN32
@@ -43,7 +40,6 @@ static void app(void)
    Client clients[MAX_CLIENTS];
 
    fd_set rdfs;
-
 
 
    // Plateau
@@ -120,8 +116,22 @@ static void app(void)
          clients[actual] = c;
          if(actual < 2){
             jeu.joueurs[actual] = c;
+
          }
          actual++;
+
+         int trouve = recherchePseudo(c.name);
+         if(trouve == 0){
+            FILE *fichier = fopen("users.csv", "a");
+            if(fichier == NULL){
+               perror("Erreur d'ouverture du fichier users.csv");
+               exit(errno);
+            }
+
+            fprintf(fichier, "%s", c.name);
+            fprintf(fichier, "%s\n", ",");
+            fclose(fichier);
+         }
       }
       else
       {
@@ -140,10 +150,12 @@ static void app(void)
                   remove_client(clients, i, &actual);
                   strncpy(buffer, client.name, BUF_SIZE - 1);
                   strncat(buffer, " disconnected !", BUF_SIZE - strlen(buffer) - 1);
-                  send_message_to_all_clients(jeu, clients, client, actual, buffer, error, 1);
+                  send_message_to_all_clients(clients, client, actual, buffer, error, 1);
                }
                else
                {
+                  
+
                   int num = atoi(buffer);
 
 
@@ -159,13 +171,16 @@ static void app(void)
                         if(jeu.tour == 0 && num < 7){
                            
                            update(jeu.plateau, num, jeu.score, jeu.tour);
+                           affichage_jeu(jeu, clients, actual);
                            jeu.tour = 1;
                            strncpy(error, " ", BUF_SIZE - 1);
+
                         }
 
                         else if(jeu.tour == 1 && num >= 7){
                            
                            update(jeu.plateau, num, jeu.score, jeu.tour);
+                           affichage_jeu(jeu, clients, actual);
                            jeu.tour = 0;
                            strncpy(error, " ", BUF_SIZE - 1);
                         }
@@ -176,7 +191,11 @@ static void app(void)
 
                   }
 
-                  send_message_to_all_clients(jeu, clients, client, actual, buffer, error, 0);
+
+                  send_message_to_all_clients(clients, client, actual, buffer, error, 0);
+
+                  
+                  
                }
                break;
             }
@@ -249,7 +268,7 @@ static void remove_client(Client *clients, int to_remove, int *actual)
    (*actual)--;
 }
 
-static void send_message_to_all_clients(Jeu jeu, Client *clients, Client sender, int actual, const char *buffer, char *error, char from_server)
+static void affichage_jeu(Jeu jeu, Client *clients, int actual)
 {
    int i = 0,j = 0;
 
@@ -288,6 +307,35 @@ static void send_message_to_all_clients(Jeu jeu, Client *clients, Client sender,
    for(i = 0; i < actual; i++)
    {
       /* we don't send message to the sender */
+      
+      strncpy(message, "\n", BUF_SIZE - 1);
+      strncat(message, jeu.joueurs[0].name, sizeof message - strlen(message) - 1);
+      strncat(message, " --> ", sizeof message - strlen(message) - 1);
+      strncat(message, &score1[0], BUF_SIZE - 1);
+      strncat(message, "\n", sizeof message - strlen(message) - 1);
+      strncat(message, jeu_str, BUF_SIZE - 1);
+      strncat(message, "\n", sizeof message - strlen(message) - 1);
+      strncat(message, jeu.joueurs[1].name, sizeof message - strlen(message) - 1);
+      strncat(message, " --> ", sizeof message - strlen(message) - 1);
+      strncat(message, &score2[0], BUF_SIZE - 1);
+      strncat(message, "\n", sizeof message - strlen(message) - 1);
+
+      
+
+      write_client(clients[i].sock, message);
+   }
+}
+
+static void send_message_to_all_clients(Client *clients, Client sender, int actual, const char *buffer, char *error, char from_server)
+{
+   int i = 0;
+
+
+   char message[BUF_SIZE];
+   message[0] = 0;
+   for(i = 0; i < actual; i++)
+   {
+      /* we don't send message to the sender */
       if(sender.sock != clients[i].sock)
       {
          if(from_server == 0)
@@ -298,20 +346,10 @@ static void send_message_to_all_clients(Jeu jeu, Client *clients, Client sender,
          strncat(message, buffer, sizeof message - strlen(message) - 1);
          
       }
-      strncat(message, error, sizeof message - strlen(message) - 1);
-      strncat(message, "\n", sizeof message - strlen(message) - 1);
-      strncat(message, "\n", sizeof message - strlen(message) - 1);
-      strncat(message, jeu.joueurs[0].name, sizeof message - strlen(message) - 1);
-      strncat(message, " --> ", sizeof message - strlen(message) - 1);
-      strncat(message, &score1[0], BUF_SIZE - 1);
-      strncat(message, "\n", sizeof message - strlen(message) - 1);
-      strncat(message, jeu_str, BUF_SIZE - 1);
-      strncat(message, "\n", sizeof message - strlen(message) - 1);
-      strncat(message, jeu.joueurs[1].name, sizeof message - strlen(message) - 1);
-      strncat(message, " -->", sizeof message - strlen(message) - 1);
-      strncat(message, &score2[0], BUF_SIZE - 1);
-      strncat(message, "\n", sizeof message - strlen(message) - 1);
-
+      else
+      {
+         strncpy(message, error, BUF_SIZE - 1);
+      }
       
 
       write_client(clients[i].sock, message);
@@ -388,3 +426,32 @@ int main(int argc, char **argv)
 
    return EXIT_SUCCESS;
 }
+
+
+int recherchePseudo(char* pseudo){
+   FILE *fichier = fopen("users.csv", "r");
+   if(fichier == NULL){
+      perror("Erreur d'ouverture du fichier users.csv");
+      exit(errno);
+   }
+
+   char ligne[BUF_SIZE];
+   int numero_ligne = 1;
+   int trouve = 0;
+
+   while(fgets(ligne, sizeof(ligne), fichier) != NULL){
+      char* pseudo_fichier = strtok(ligne, ",");
+      if(pseudo_fichier != NULL && strcmp(pseudo_fichier, pseudo) == 0){
+         //printf("Le pseudo '%s' a été trouvé à la ligne %d.\n", pseudo, numero_ligne);
+         trouve = 1;
+         break;
+      }
+      numero_ligne++;
+   }
+
+   fclose(fichier);
+
+   return trouve;
+}
+
+

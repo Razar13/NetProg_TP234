@@ -53,8 +53,10 @@ static void end_connection(int sock);
 void update(int* plateau, int num, int* score, int tour);
 static int read_client(SOCKET sock, char *buffer);
 static void write_client(SOCKET sock, const char *buffer);
-static void send_message_to_all_clients(Jeu jeu, Client *clients, Client client, int actual, const char *buffer, char *error, char from_server);
+static void affichage_jeu(Jeu jeu, Client *clients, int actual);
+static void send_message_to_all_clients(Client *clients, Client client, int actual, const char *buffer, char *error, char from_server);
 static void remove_client(Client *clients, int to_remove, int *actual);
 static void clear_clients(Client *clients, int actual);
+int recherchePseudo(char* pseudo);
 
 #endif /* guard */
