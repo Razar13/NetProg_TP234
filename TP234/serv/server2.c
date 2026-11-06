@@ -154,7 +154,9 @@ static void app(void)
                }
                else
                {
-                  
+                  char defi[6];
+                  strncpy(defi, buffer, 5);
+                  defi[5] = '\0';
 
                   int num = atoi(buffer);
 
@@ -189,6 +191,30 @@ static void app(void)
                         }
                      }
 
+                  }
+
+                  else if(strcmp(buffer, "/clients") == 0){
+                     affichage_clients(clients, client, actual);
+                  }
+
+                  else if(strcmp(defi, "/defi") == 0){
+
+                     char* pseudo_defi = buffer + 6; // On récupère le pseudo du joueur défié
+                     int trouve = rechercheJoueur(pseudo_defi, client, clients, actual);
+                     if(trouve == 0){
+                        strncpy(error, "Le pseudo du joueur défié n'existe pas !", BUF_SIZE - 1);
+                     }
+                     else{
+                        strncpy(error, "Défi lancé !", BUF_SIZE - 1);
+                     }
+                  }
+
+                  else if(strcmp(buffer, "/help") == 0){
+                     strncpy(error, "Commandes disponibles : /clients, /defi, /help", BUF_SIZE - 1);
+                  }
+
+                  else{
+                     strncpy(error, "Commande invalide !", BUF_SIZE - 1);
                   }
 
 
@@ -356,6 +382,21 @@ static void send_message_to_all_clients(Client *clients, Client sender, int actu
    }
 }
 
+static void affichage_clients(Client *clients, Client sender, int actual)
+{
+   
+   int i = 0;
+   char message[BUF_SIZE];
+   message[0] = 0;
+   for(i = 0; i < actual; i++)
+   {
+      strncat(message, clients[i].name, sizeof message - strlen(message) - 1);
+      strncat(message, "\n", sizeof message - strlen(message) - 1);
+   }
+
+   write_client(sender.sock, message);
+}
+
 static int init_connection(void)
 {
    SOCKET sock = socket(AF_INET, SOCK_STREAM, 0);
@@ -452,6 +493,16 @@ int recherchePseudo(char* pseudo){
    fclose(fichier);
 
    return trouve;
+}
+
+int rechercheJoueur(char* pseudo, Client sender,  Client *clients, int actual){
+   int i = 0;
+   for(i = 0; i < actual; i++){
+      if(strcmp(clients[i].name, pseudo) == 0 && strcmp(clients[i].name, sender.name) != 0){
+         return 1; // Joueur trouvé
+      }
+   }
+   return 0; // Joueur non trouvé
 }
 
 
