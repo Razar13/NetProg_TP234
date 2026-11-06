@@ -200,12 +200,15 @@ static void app(void)
                   else if(strcmp(defi, "/defi") == 0){
 
                      char* pseudo_defi = buffer + 6; // On récupère le pseudo du joueur défié
+                     char message_defi[BUF_SIZE];
+                     snprintf(message_defi, BUF_SIZE, "Vous avez été défié par %s, acceptez-vous le défi ? (oui/non)", client.name);
                      int trouve = rechercheJoueur(pseudo_defi, client, clients, actual);
-                     if(trouve == 0){
-                        strncpy(error, "Le pseudo du joueur défié n'existe pas !", BUF_SIZE - 1);
+                     if(trouve == -1){
+                        strncpy(error, "Tu ne peux pas défier ce joueur !", BUF_SIZE - 1);
                      }
                      else{
                         strncpy(error, "Défi lancé !", BUF_SIZE - 1);
+                        write_client(recupererJoueurParIndice(trouve, clients, actual).sock, message_defi);
                      }
                   }
 
@@ -499,10 +502,16 @@ int rechercheJoueur(char* pseudo, Client sender,  Client *clients, int actual){
    int i = 0;
    for(i = 0; i < actual; i++){
       if(strcmp(clients[i].name, pseudo) == 0 && strcmp(clients[i].name, sender.name) != 0){
-         return 1; // Joueur trouvé
+         return i; // Retourne l'indice du joueur trouvé
       }
    }
-   return 0; // Joueur non trouvé
+   return -1; // Joueur non trouvé
 }
 
+Client recupererJoueurParIndice(int indice, Client *clients, int actual) {
+    if (indice >= 0 && indice < actual) {
+        return clients[indice]; // Retourne le joueur à l'indice spécifié
+    }
+    return (Client){0}; // Retourne un Client vide si l'indice est invalide
+}
 

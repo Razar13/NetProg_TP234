@@ -60,5 +60,6 @@ static void remove_client(Client *clients, int to_remove, int *actual);
 static void clear_clients(Client *clients, int actual);
 int recherchePseudo(char* pseudo);
 int rechercheJoueur(char* pseudo, Client sender, Client *clients, int actual);
+Client recupererJoueurParIndice(int indice, Client *clients, int actual);
 
 #endif /* guard */
