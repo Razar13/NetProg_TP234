@@ -35,6 +35,7 @@ static void app(void)
 {
    SOCKET sock = init_connection();
    char buffer[BUF_SIZE];
+   char error[BUF_SIZE];
    /* the index for the array */
    int actual = 0;
    int max = sock;
@@ -139,7 +140,7 @@ static void app(void)
                   remove_client(clients, i, &actual);
                   strncpy(buffer, client.name, BUF_SIZE - 1);
                   strncat(buffer, " disconnected !", BUF_SIZE - strlen(buffer) - 1);
-                  send_message_to_all_clients(jeu, clients, client, actual, buffer, 1);
+                  send_message_to_all_clients(jeu, clients, client, actual, buffer, error, 1);
                }
                else
                {
@@ -150,28 +151,32 @@ static void app(void)
 
 
                      if(strcmp(jeu.joueurs[jeu.tour].name, client.name) != 0){
-                        strncpy(buffer, "C'est pas ton tour :( !", BUF_SIZE - 1);
+                        strncpy(error, "C'est pas ton tour :( !", BUF_SIZE - 1);
                      }
 
                      else{
 
                         if(jeu.tour == 0 && num < 7){
-                           jeu.tour = 1;
+                           
                            update(jeu.plateau, num, jeu.score, jeu.tour);
+                           jeu.tour = 1;
+                           strncpy(error, " ", BUF_SIZE - 1);
                         }
 
                         else if(jeu.tour == 1 && num >= 7){
-                           jeu.tour = 0;
+                           
                            update(jeu.plateau, num, jeu.score, jeu.tour);
+                           jeu.tour = 0;
+                           strncpy(error, " ", BUF_SIZE - 1);
                         }
                         else{ 
-                           strncpy(buffer, "Joue chez toi stp !", BUF_SIZE - 1);
+                           strncpy(error, "Joue chez toi stp !", BUF_SIZE - 1);
                         }
                      }
 
                   }
 
-                  send_message_to_all_clients(jeu, clients, client, actual, buffer, 0);
+                  send_message_to_all_clients(jeu, clients, client, actual, buffer, error, 0);
                }
                break;
             }
@@ -191,10 +196,8 @@ void update(int* plateau, int num, int* score, int tour){
    plateau[j] = 0;
 
    while(i < nb_cailloux){
-      j++;
-      if(j > 11){
-         j = 0;
-      }
+
+      j = (j+1) % 12;
 
       plateau[j] += 1;
 
@@ -246,16 +249,20 @@ static void remove_client(Client *clients, int to_remove, int *actual)
    (*actual)--;
 }
 
-static void send_message_to_all_clients(Jeu jeu, Client *clients, Client sender, int actual, const char *buffer, char from_server)
+static void send_message_to_all_clients(Jeu jeu, Client *clients, Client sender, int actual, const char *buffer, char *error, char from_server)
 {
    int i = 0,j = 0;
 
    char jeu_str[BUF_SIZE];
 
+   char score1[BUF_SIZE];
+   char score2[BUF_SIZE];
+   score1[0] = jeu.score[0] + '0';
+   score2[0] = jeu.score[1] + '0';
 
 
    while(i<6){
-      jeu_str[j++] = plateau[i] + '0';
+      jeu_str[j++] = jeu.plateau[i] + '0';
       jeu_str[j++] = ' ';
 
       if(i == 5){
@@ -268,7 +275,7 @@ static void send_message_to_all_clients(Jeu jeu, Client *clients, Client sender,
    i = 0;
 
    while(i<6){
-      jeu_str[j++] = plateau[11 - i] + '0';
+      jeu_str[j++] = jeu.plateau[11 - i] + '0';
       jeu_str[j++] = ' ';
 
       i++;
@@ -289,14 +296,21 @@ static void send_message_to_all_clients(Jeu jeu, Client *clients, Client sender,
             strncat(message, " : ", sizeof message - strlen(message) - 1);
          }
          strncat(message, buffer, sizeof message - strlen(message) - 1);
-         strncat(message, "\n", sizeof message - strlen(message) - 1);
-         strncat(message, jeu_str, BUF_SIZE - 1);
-         strncat(message, "\n", sizeof message - strlen(message) - 1);
+         
       }
-      else{
-         strncpy(message, jeu_str, BUF_SIZE - 1);
-         strncat(message, "\n", sizeof message - strlen(message) - 1);
-      }
+      strncat(message, error, sizeof message - strlen(message) - 1);
+      strncat(message, "\n", sizeof message - strlen(message) - 1);
+      strncat(message, "\n", sizeof message - strlen(message) - 1);
+      strncat(message, jeu.joueurs[0].name, sizeof message - strlen(message) - 1);
+      strncat(message, " --> ", sizeof message - strlen(message) - 1);
+      strncat(message, &score1[0], BUF_SIZE - 1);
+      strncat(message, "\n", sizeof message - strlen(message) - 1);
+      strncat(message, jeu_str, BUF_SIZE - 1);
+      strncat(message, "\n", sizeof message - strlen(message) - 1);
+      strncat(message, jeu.joueurs[1].name, sizeof message - strlen(message) - 1);
+      strncat(message, " -->", sizeof message - strlen(message) - 1);
+      strncat(message, &score2[0], BUF_SIZE - 1);
+      strncat(message, "\n", sizeof message - strlen(message) - 1);
 
       
 
