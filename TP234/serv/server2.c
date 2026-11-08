@@ -1,12 +1,17 @@
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <errno.h>
 #include <string.h>
+#include <time.h>
 
 #include "server2.h"
-#include "client2.h"
+#include "commands.h"
 
-
+/* Clients alloués avec malloc : un Client* reste valide même quand on
+   décale le tableau, c'est ce qui permet à game->players[] de pointer dessus. */
+static Client *clients[MAX_CLIENTS];
+static int nb_clients = 0;
 
 static void init(void)
 {
@@ -28,388 +33,251 @@ static void end(void)
 #endif
 }
 
-static void app(void)
+/* ---- Registre des clients ----------------------------------------- */
+
+Client *client_find(const char *name)
 {
-   SOCKET sock = init_connection();
-   char buffer[BUF_SIZE];
-   char error[BUF_SIZE];
-   /* the index for the array */
-   int actual = 0;
-   int max = sock;
-   /* an array for all clients */
-   Client clients[MAX_CLIENTS];
-
-   fd_set rdfs;
-
-
-   // Plateau
-   Jeu jeu;
-   jeu.tour = 0;
-   jeu.score[0] = 0;
-   jeu.score[1] = 0;
-   jeu.direction = 0;
-
-   int i;
-
-
-   for(i = 0; i < 12; i++)
+   for(int i = 0; i < nb_clients; i++)
    {
-      jeu.plateau[i] = 4;
+      if(clients[i]->name[0] && strcmp(clients[i]->name, name) == 0)
+      {
+         return clients[i];
+      }
+   }
+   return NULL;
+}
+
+int client_count(void)
+{
+   return nb_clients;
+}
+
+Client *client_at(int i)
+{
+   return clients[i];
+}
+
+/* ---- Envoi --------------------------------------------------------- */
+
+void send_to(Client *c, const char *fmt, ...)
+{
+   char buf[BUF_SIZE];
+   va_list ap;
+   int n;
+
+   va_start(ap, fmt);
+   n = vsnprintf(buf, sizeof buf - 1, fmt, ap);
+   va_end(ap);
+   if(n < 0) return;
+   if(n > (int)sizeof buf - 2) n = (int)sizeof buf - 2;
+   buf[n++] = '\n';   /* une ligne = un message */
+
+   /* MSG_NOSIGNAL : écrire sur une socket fermée ne doit pas tuer le serveur.
+      Si le client est parti, c'est la lecture (recv == 0) qui le détectera. */
+   if(send(c->sock, buf, n, MSG_NOSIGNAL) < 0)
+   {
+      perror("send()");
+   }
+}
+
+/* ---- Fichier des pseudos ------------------------------------------ */
+
+static int recherchePseudo(const char *pseudo)
+{
+   FILE *fichier = fopen("users.csv", "r");
+   if(fichier == NULL)
+   {
+      return 0;   /* pas encore de fichier : aucun pseudo connu */
    }
 
-   while(1)
+   char ligne[BUF_SIZE];
+   int trouve = 0;
+
+   while(fgets(ligne, sizeof(ligne), fichier) != NULL)
    {
-      i = 0;
-      FD_ZERO(&rdfs);
-
-      /* add STDIN_FILENO */
-      FD_SET(STDIN_FILENO, &rdfs);
-
-      /* add the connection socket */
-      FD_SET(sock, &rdfs);
-
-
-      /* add socket of each client */
-      for(i = 0; i < actual; i++)
+      char *pseudo_fichier = strtok(ligne, ",\n");
+      if(pseudo_fichier != NULL && strcmp(pseudo_fichier, pseudo) == 0)
       {
-         FD_SET(clients[i].sock, &rdfs);
-      }
-
-      if(select(max + 1, &rdfs, NULL, NULL, NULL) == -1)
-      {
-         perror("select()");
-         exit(errno);
-      }
-
-      /* something from standard input : i.e keyboard */
-      if(FD_ISSET(STDIN_FILENO, &rdfs))
-      {
-         /* stop process when type on keyboard */
+         trouve = 1;
          break;
       }
-      else if(FD_ISSET(sock, &rdfs))
-      {
-         /* new client */
-         SOCKADDR_IN csin = { 0 };
-         size_t sinsize = sizeof csin;
-         int csock = accept(sock, (SOCKADDR *)&csin, &sinsize);
-         if(csock == SOCKET_ERROR)
-         {
-            perror("accept()");
-            continue;
-         }
-
-         /* after connecting the client sends its name */
-         if(read_client(csock, buffer) == -1)
-         {
-            /* disconnected */
-            continue;
-         }
-
-         /* what is the new maximum fd ? */
-         max = csock > max ? csock : max;
-
-         FD_SET(csock, &rdfs);
-
-         Client c = { csock };
-         strncpy(c.name, buffer, BUF_SIZE - 1);
-         clients[actual] = c;
-         if(actual < 2){
-            jeu.joueurs[actual] = c;
-
-         }
-         actual++;
-
-         int trouve = recherchePseudo(c.name);
-         if(trouve == 0){
-            FILE *fichier = fopen("users.csv", "a");
-            if(fichier == NULL){
-               perror("Erreur d'ouverture du fichier users.csv");
-               exit(errno);
-            }
-
-            fprintf(fichier, "%s", c.name);
-            fprintf(fichier, "%s\n", ",");
-            fclose(fichier);
-         }
-      }
-      else
-      {
-         int i = 0;
-         for(i = 0; i < actual; i++)
-         {
-            /* a client is talking */
-            if(FD_ISSET(clients[i].sock, &rdfs))
-            {
-               Client client = clients[i];
-               int c = read_client(clients[i].sock, buffer);
-               /* client disconnected */
-               if(c == 0)
-               {
-                  closesocket(clients[i].sock);
-                  remove_client(clients, i, &actual);
-                  strncpy(buffer, client.name, BUF_SIZE - 1);
-                  strncat(buffer, " disconnected !", BUF_SIZE - strlen(buffer) - 1);
-                  send_message_to_all_clients(clients, client, actual, buffer, error, 1);
-               }
-               else
-               {
-                  char defi[6];
-                  strncpy(defi, buffer, 5);
-                  defi[5] = '\0';
-
-                  int num = atoi(buffer);
-
-
-                  if(num > 0 && num < 13){
-
-
-                     if(strcmp(jeu.joueurs[jeu.tour].name, client.name) != 0){
-                        strncpy(error, "C'est pas ton tour :( !", BUF_SIZE - 1);
-                     }
-
-                     else{
-
-                        if(jeu.tour == 0 && num < 7){
-                           
-                           update(jeu.plateau, num, jeu.score, jeu.tour);
-                           affichage_jeu(jeu, clients, actual);
-                           jeu.tour = 1;
-                           strncpy(error, " ", BUF_SIZE - 1);
-
-                        }
-
-                        else if(jeu.tour == 1 && num >= 7){
-                           
-                           update(jeu.plateau, num, jeu.score, jeu.tour);
-                           affichage_jeu(jeu, clients, actual);
-                           jeu.tour = 0;
-                           strncpy(error, " ", BUF_SIZE - 1);
-                        }
-                        else{ 
-                           strncpy(error, "Joue chez toi stp !", BUF_SIZE - 1);
-                        }
-                     }
-
-                  }
-
-                  else if(strcmp(buffer, "/clients") == 0){
-                     affichage_clients(clients, client, actual);
-                  }
-
-                  else if(strcmp(defi, "/defi") == 0){
-
-                     char* pseudo_defi = buffer + 6; // On récupère le pseudo du joueur défié
-                     char message_defi[BUF_SIZE];
-                     snprintf(message_defi, BUF_SIZE, "Vous avez été défié par %s, acceptez-vous le défi ? (oui/non)", client.name);
-                     int trouve = rechercheJoueur(pseudo_defi, client, clients, actual);
-                     if(trouve == -1){
-                        strncpy(error, "Tu ne peux pas défier ce joueur !", BUF_SIZE - 1);
-                     }
-                     else{
-                        strncpy(error, "Défi lancé !", BUF_SIZE - 1);
-                        write_client(recupererJoueurParIndice(trouve, clients, actual).sock, message_defi);
-                     }
-                  }
-
-                  else if(strcmp(buffer, "/help") == 0){
-                     strncpy(error, "Commandes disponibles : /clients, /defi, /help", BUF_SIZE - 1);
-                  }
-
-                  else{
-                     strncpy(error, "Commande invalide !", BUF_SIZE - 1);
-                  }
-
-
-                  send_message_to_all_clients(clients, client, actual, buffer, error, 0);
-
-                  
-                  
-               }
-               break;
-            }
-         }
-      }
    }
 
-   clear_clients(clients, actual);
-   end_connection(sock);
+   fclose(fichier);
+   return trouve;
 }
 
-
-void update(int* plateau, int num, int* score, int tour){
-   int nb_cailloux = plateau[num-1];
-   int i = 0;
-   int j = num-1;
-   plateau[j] = 0;
-
-   while(i < nb_cailloux){
-
-      j = (j+1) % 12;
-
-      plateau[j] += 1;
-
-      i++;
-   }
-   
-   i = 0;
-   int valide = 1;
-   while(valide && i<nb_cailloux){
-      
-      
-
-      if(plateau[j] == 2 || plateau[j] == 3){
-         score[tour] += plateau[j];
-         plateau[j] = 0;
-      }
-      else{
-         valide = 0;
-      }
-
-      if(j==0){
-         j = 11;
-      }
-      else{
-         j--;
-      }
-
-      i++;
-   }
-}
-
-
-
-
-static void clear_clients(Client *clients, int actual)
+static void enregistrerPseudo(const char *pseudo)
 {
-   int i = 0;
-   for(i = 0; i < actual; i++)
+   FILE *fichier = fopen("users.csv", "a");
+   if(fichier == NULL)
    {
-      closesocket(clients[i].sock);
+      perror("Erreur d'ouverture du fichier users.csv");
+      return;
    }
+   fprintf(fichier, "%s,\n", pseudo);
+   fclose(fichier);
 }
 
-static void remove_client(Client *clients, int to_remove, int *actual)
+/* ---- Connexion / déconnexion d'un client -------------------------- */
+
+static int pseudo_valide(const char *name)
 {
-   /* we remove the client in the array */
-   memmove(clients + to_remove, clients + to_remove + 1, (*actual - to_remove - 1) * sizeof(Client));
-   /* number client - 1 */
-   (*actual)--;
-}
-
-static void affichage_jeu(Jeu jeu, Client *clients, int actual)
-{
-   int i = 0,j = 0;
-
-   char jeu_str[BUF_SIZE];
-
-   char score1[BUF_SIZE];
-   char score2[BUF_SIZE];
-   score1[0] = jeu.score[0] + '0';
-   score2[0] = jeu.score[1] + '0';
-
-
-   while(i<6){
-      jeu_str[j++] = jeu.plateau[i] + '0';
-      jeu_str[j++] = ' ';
-
-      if(i == 5){
-         jeu_str[j++] = '\n';
-      }
-
-      i++;
-   }
-
-   i = 0;
-
-   while(i<6){
-      jeu_str[j++] = jeu.plateau[11 - i] + '0';
-      jeu_str[j++] = ' ';
-
-      i++;
-   }
-
-
-
-   char message[BUF_SIZE];
-   message[0] = 0;
-   for(i = 0; i < actual; i++)
+   size_t len = strlen(name);
+   if(len == 0 || len >= NAME_SIZE) return 0;
+   for(size_t i = 0; i < len; i++)
    {
-      /* we don't send message to the sender */
-      
-      strncpy(message, "\n", BUF_SIZE - 1);
-      strncat(message, jeu.joueurs[0].name, sizeof message - strlen(message) - 1);
-      strncat(message, " --> ", sizeof message - strlen(message) - 1);
-      strncat(message, &score1[0], BUF_SIZE - 1);
-      strncat(message, "\n", sizeof message - strlen(message) - 1);
-      strncat(message, jeu_str, BUF_SIZE - 1);
-      strncat(message, "\n", sizeof message - strlen(message) - 1);
-      strncat(message, jeu.joueurs[1].name, sizeof message - strlen(message) - 1);
-      strncat(message, " --> ", sizeof message - strlen(message) - 1);
-      strncat(message, &score2[0], BUF_SIZE - 1);
-      strncat(message, "\n", sizeof message - strlen(message) - 1);
-
-      
-
-      write_client(clients[i].sock, message);
+      /* pas d'espace/caractère de contrôle (cassent /defi), pas de virgule (CSV) */
+      if((unsigned char)name[i] <= ' ' || name[i] == ',') return 0;
    }
+   return 1;
 }
 
-static void send_message_to_all_clients(Client *clients, Client sender, int actual, const char *buffer, char *error, char from_server)
+/* La première ligne envoyée par un client est son pseudo. -1 = refusé. */
+static int register_client(Client *c, const char *name)
 {
-   int i = 0;
-
-
-   char message[BUF_SIZE];
-   message[0] = 0;
-   for(i = 0; i < actual; i++)
+   if(!pseudo_valide(name))
    {
-      /* we don't send message to the sender */
-      if(sender.sock != clients[i].sock)
+      send_to(c, "Pseudo invalide (1 à %d caractères, sans espace ni virgule).", NAME_SIZE - 1);
+      return -1;
+   }
+   if(client_find(name) != NULL)
+   {
+      send_to(c, "Ce pseudo est déjà connecté.");
+      return -1;
+   }
+
+   strncpy(c->name, name, NAME_SIZE - 1);
+   if(!recherchePseudo(c->name))
+   {
+      enregistrerPseudo(c->name);
+   }
+
+   send_to(c, "Bienvenue %s ! Tapez /help pour la liste des commandes.", c->name);
+   for(int i = 0; i < nb_clients; i++)
+   {
+      if(clients[i] != c && clients[i]->name[0])
       {
-         if(from_server == 0)
+         send_to(clients[i], "%s s'est connecté.", c->name);
+      }
+   }
+   return 0;
+}
+
+static void accept_client(SOCKET sock)
+{
+   SOCKADDR_IN csin = { 0 };
+   socklen_t sinsize = sizeof csin;
+   int csock = accept(sock, (SOCKADDR *)&csin, &sinsize);
+   if(csock == SOCKET_ERROR)
+   {
+      perror("accept()");
+      return;
+   }
+
+   Client *c = calloc(1, sizeof *c);
+   if(c == NULL || nb_clients >= MAX_CLIENTS)
+   {
+      const char *msg = "Serveur plein.\n";
+      send(csock, msg, strlen(msg), MSG_NOSIGNAL);
+      closesocket(csock);
+      free(c);
+      return;
+   }
+   c->sock = csock;
+   clients[nb_clients++] = c;
+}
+
+static void disconnect_client(Client *c)
+{
+   char name[NAME_SIZE];
+   strncpy(name, c->name, sizeof name);
+
+   if(c->name[0])
+   {
+      commands_on_disconnect(c);   /* défis annulés, forfait éventuel */
+   }
+
+   closesocket(c->sock);
+   for(int i = 0; i < nb_clients; i++)
+   {
+      if(clients[i] == c)
+      {
+         memmove(clients + i, clients + i + 1, (nb_clients - i - 1) * sizeof(Client *));
+         nb_clients--;
+         break;
+      }
+   }
+   free(c);
+
+   if(name[0])
+   {
+      for(int i = 0; i < nb_clients; i++)
+      {
+         if(clients[i]->name[0])
          {
-            strncpy(message, sender.name, BUF_SIZE - 1);
-            strncat(message, " : ", sizeof message - strlen(message) - 1);
+            send_to(clients[i], "%s s'est déconnecté.", name);
          }
-         strncat(message, buffer, sizeof message - strlen(message) - 1);
-         
       }
-      else
-      {
-         strncpy(message, error, BUF_SIZE - 1);
-      }
-      
-
-      write_client(clients[i].sock, message);
    }
 }
 
-static void affichage_clients(Client *clients, Client sender, int actual)
+/* Lit ce qui arrive sur la socket et traite chaque ligne complète.
+   TCP est un flux : un recv peut contenir une demi-ligne ou plusieurs lignes.
+   Renvoie -1 si le client doit être déconnecté. */
+static int handle_client_input(Client *c)
 {
-   
-   int i = 0;
-   char message[BUF_SIZE];
-   message[0] = 0;
-   for(i = 0; i < actual; i++)
+   int room = (int)sizeof c->inbuf - c->inlen;
+   if(room <= 0)
    {
-      strncat(message, clients[i].name, sizeof message - strlen(message) - 1);
-      strncat(message, "\n", sizeof message - strlen(message) - 1);
+      c->inlen = 0;   /* ligne démesurée sans '\n' : on la jette */
+      room = (int)sizeof c->inbuf;
    }
 
-   write_client(sender.sock, message);
+   int n = recv(c->sock, c->inbuf + c->inlen, room, 0);
+   if(n < 0) perror("recv()");
+   if(n <= 0) return -1;
+   c->inlen += n;
+
+   char *start = c->inbuf;
+   char *nl;
+   while((nl = memchr(start, '\n', c->inbuf + c->inlen - start)) != NULL)
+   {
+      *nl = 0;
+      if(nl > start && nl[-1] == '\r') nl[-1] = 0;
+
+      if(c->name[0] == 0)
+      {
+         if(register_client(c, start) < 0) return -1;
+      }
+      else if(start[0] != 0)
+      {
+         commands_handle(c, start);
+      }
+      start = nl + 1;
+   }
+
+   c->inlen -= (int)(start - c->inbuf);
+   memmove(c->inbuf, start, c->inlen);
+   return 0;
 }
+
+/* ---- Boucle principale -------------------------------------------- */
 
 static int init_connection(void)
 {
    SOCKET sock = socket(AF_INET, SOCK_STREAM, 0);
    SOCKADDR_IN sin = { 0 };
+   int yes = 1;
 
    if(sock == INVALID_SOCKET)
    {
       perror("socket()");
       exit(errno);
    }
+
+   /* permet de relancer le serveur tout de suite après un arrêt */
+   setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, (const char *)&yes, sizeof yes);
 
    sin.sin_addr.s_addr = htonl(INADDR_ANY);
    sin.sin_port = htons(PORT);
@@ -435,33 +303,71 @@ static void end_connection(int sock)
    closesocket(sock);
 }
 
-static int read_client(SOCKET sock, char *buffer)
+static void app(void)
 {
-   int n = 0;
+   SOCKET sock = init_connection();
+   fd_set rdfs;
 
-   if((n = recv(sock, buffer, BUF_SIZE - 1, 0)) < 0)
+   srand((unsigned)time(NULL));   /* pour le tirage au sort du premier joueur */
+
+   while(1)
    {
-      perror("recv()");
-      /* if recv error we disonnect the client */
-      n = 0;
+      int max = sock;
+
+      FD_ZERO(&rdfs);
+      FD_SET(STDIN_FILENO, &rdfs);
+      FD_SET(sock, &rdfs);
+      for(int i = 0; i < nb_clients; i++)
+      {
+         FD_SET(clients[i]->sock, &rdfs);
+         if(clients[i]->sock > max) max = clients[i]->sock;
+      }
+
+      if(select(max + 1, &rdfs, NULL, NULL, NULL) == -1)
+      {
+         perror("select()");
+         exit(errno);
+      }
+
+      /* quelque chose au clavier du serveur : on arrête */
+      if(FD_ISSET(STDIN_FILENO, &rdfs))
+      {
+         break;
+      }
+
+      if(FD_ISSET(sock, &rdfs))
+      {
+         accept_client(sock);
+      }
+
+      /* on parcourt tous les clients : plusieurs peuvent avoir parlé */
+      for(int i = 0; i < nb_clients; i++)
+      {
+         if(FD_ISSET(clients[i]->sock, &rdfs))
+         {
+            if(handle_client_input(clients[i]) < 0)
+            {
+               disconnect_client(clients[i]);
+               i--;   /* le tableau s'est décalé */
+            }
+         }
+      }
    }
 
-   buffer[n] = 0;
-
-   return n;
-}
-
-static void write_client(SOCKET sock, const char *buffer)
-{
-   if(send(sock, buffer, strlen(buffer), 0) < 0)
+   for(int i = 0; i < nb_clients; i++)
    {
-      perror("send()");
-      exit(errno);
+      closesocket(clients[i]->sock);
+      free(clients[i]);
    }
+   nb_clients = 0;
+   end_connection(sock);
 }
 
 int main(int argc, char **argv)
 {
+   (void)argc;
+   (void)argv;
+
    init();
 
    app();
@@ -470,48 +376,3 @@ int main(int argc, char **argv)
 
    return EXIT_SUCCESS;
 }
-
-
-int recherchePseudo(char* pseudo){
-   FILE *fichier = fopen("users.csv", "r");
-   if(fichier == NULL){
-      perror("Erreur d'ouverture du fichier users.csv");
-      exit(errno);
-   }
-
-   char ligne[BUF_SIZE];
-   int numero_ligne = 1;
-   int trouve = 0;
-
-   while(fgets(ligne, sizeof(ligne), fichier) != NULL){
-      char* pseudo_fichier = strtok(ligne, ",");
-      if(pseudo_fichier != NULL && strcmp(pseudo_fichier, pseudo) == 0){
-         //printf("Le pseudo '%s' a été trouvé à la ligne %d.\n", pseudo, numero_ligne);
-         trouve = 1;
-         break;
-      }
-      numero_ligne++;
-   }
-
-   fclose(fichier);
-
-   return trouve;
-}
-
-int rechercheJoueur(char* pseudo, Client sender,  Client *clients, int actual){
-   int i = 0;
-   for(i = 0; i < actual; i++){
-      if(strcmp(clients[i].name, pseudo) == 0 && strcmp(clients[i].name, sender.name) != 0){
-         return i; // Retourne l'indice du joueur trouvé
-      }
-   }
-   return -1; // Joueur non trouvé
-}
-
-Client recupererJoueurParIndice(int indice, Client *clients, int actual) {
-    if (indice >= 0 && indice < actual) {
-        return clients[indice]; // Retourne le joueur à l'indice spécifié
-    }
-    return (Client){0}; // Retourne un Client vide si l'indice est invalide
-}
-

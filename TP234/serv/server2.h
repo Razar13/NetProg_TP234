@@ -1,65 +1,14 @@
 #ifndef SERVER_H
 #define SERVER_H
 
-#ifdef WIN32
+#include "types.h"
 
-#include <winsock2.h>
+/* Envoie une ligne formatée (printf) à un seul client. */
+void send_to(Client *c, const char *fmt, ...) PRINTF_FMT(2, 3);
 
-#elif defined (linux)
-
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <unistd.h> /* close */
-#include <netdb.h> /* gethostbyname */
-#define INVALID_SOCKET -1
-#define SOCKET_ERROR -1
-#define closesocket(s) close(s)
-typedef int SOCKET;
-typedef struct sockaddr_in SOCKADDR_IN;
-typedef struct sockaddr SOCKADDR;
-typedef struct in_addr IN_ADDR;
-
-
-
-#else
-
-#error not defined for this platform
-
-#endif
-
-#define CRLF        "\r\n"
-#define PORT         1977
-#define MAX_CLIENTS     100
-
-#define BUF_SIZE    1024
-
-#include "client2.h"
-
-typedef struct{
-    int tour;
-    int plateau[12];
-    Client joueurs[2];
-    int direction;
-    int score[2];
-}Jeu;
-
-static void init(void);
-static void end(void);
-static void app(void);
-static int init_connection(void);
-static void end_connection(int sock);
-void update(int* plateau, int num, int* score, int tour);
-static int read_client(SOCKET sock, char *buffer);
-static void write_client(SOCKET sock, const char *buffer);
-static void affichage_jeu(Jeu jeu, Client *clients, int actual);
-static void send_message_to_all_clients(Client *clients, Client client, int actual, const char *buffer, char *error, char from_server);
-static void affichage_clients(Client *clients, Client sender, int actual); 
-static void remove_client(Client *clients, int to_remove, int *actual);
-static void clear_clients(Client *clients, int actual);
-int recherchePseudo(char* pseudo);
-int rechercheJoueur(char* pseudo, Client sender, Client *clients, int actual);
-Client recupererJoueurParIndice(int indice, Client *clients, int actual);
+/* Registre des clients connectés. */
+Client *client_find(const char *name);   /* par pseudo, NULL si absent */
+int client_count(void);
+Client *client_at(int i);
 
 #endif /* guard */

@@ -54,7 +54,11 @@ static void app(const char *address, const char *name)
       /* something from standard input : i.e keyboard */
       if(FD_ISSET(STDIN_FILENO, &rdfs))
       {
-         fgets(buffer, BUF_SIZE - 1, stdin);
+         if(fgets(buffer, BUF_SIZE - 1, stdin) == NULL)   /* EOF */
+         {
+            break;
+         }
+         else
          {
             char *p = NULL;
             p = strstr(buffer, "\n");
@@ -79,7 +83,7 @@ static void app(const char *address, const char *name)
             printf("Server disconnected !\n");
             break;
          }
-         puts(buffer);
+         fputs(buffer, stdout);
       }
    }
 
@@ -140,7 +144,9 @@ static int read_server(SOCKET sock, char *buffer)
 
 static void write_server(SOCKET sock, const char *buffer)
 {
-   if(send(sock, buffer, strlen(buffer), 0) < 0)
+   char line[BUF_SIZE + 2];
+   snprintf(line, sizeof line, "%s\n", buffer);
+   if(send(sock, line, strlen(line), 0) < 0)
    {
       perror("send()");
       exit(errno);
@@ -149,7 +155,7 @@ static void write_server(SOCKET sock, const char *buffer)
 
 int main(int argc, char **argv)
 {
-   if(argc < 2)
+   if(argc < 3)
    {
       printf("Usage : %s [address] [pseudo]\n", argv[0]);
       return EXIT_FAILURE;
