@@ -98,6 +98,11 @@ static void cmd_defi(Client *me, char *args)
       send_to(me, "Un défi est déjà en cours pour l'un de vous deux, trop de défi tue le défi.");
       return;
    }
+   if(me->observing || other->observing)
+   {
+      send_to(me, "Un des deux joueurs est en train d'observer une partie, pas de jaloux.");
+      return;
+   }
 
    me->challenged = other;
    other->challenger = me;

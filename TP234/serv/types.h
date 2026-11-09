@@ -54,7 +54,10 @@ struct Client
    char name[NAME_SIZE];   /* vide tant que le client n'a pas envoyé son pseudo */
    char inbuf[BUF_SIZE];   /* octets reçus pas encore découpés en lignes */
    int inlen;
+
    Game *game;             /* partie en cours, NULL sinon */
+   Game *observing;        /* partie observée, NULL sinon */
+
    Client *challenger;     /* qui m'a défié (en attente de ma réponse), NULL sinon */
    Client *challenged;     /* qui j'ai défié (en attente de sa réponse), NULL sinon */
 };
@@ -64,6 +67,9 @@ struct Game
    int id;
    Client *players[2];     /* players[0] possède les cases 0-5, players[1] les cases 6-11 */
    Awale state;
+
+   Client *observers[MAX_CLIENTS]; /* NULL si pas d'observateur, sinon pointeur vers le client */
+   int nb_observers;
 };
 
 #endif /* guard */

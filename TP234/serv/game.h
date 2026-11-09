@@ -22,4 +22,13 @@ void game_end(Game *g);
 /* Un joueur a quitté : l'adversaire gagne par forfait, la partie est libérée. */
 void game_forfeit(Game *g, Client *loser);
 
+//affiche les parties en cours à un client
+void game_list(Client *client);
+
+//ajoute un client comme observateur d'une partie
+int game_observe(Client *client, int game_id);
+
+//retire un client de la partie qu'il observe
+void game_remove_observer(Client *client);
+
 #endif /* guard */
