@@ -92,6 +92,28 @@ void game_send_board(Game *g, int over)
    }
 }
 
+static void game_send_board_to(Game *g, Client *client, int over)
+{
+   char board[256];
+   const Awale *a = &g->state;
+
+   awale_board_string(a, board, sizeof board);
+
+   if(over)
+   {
+      send_to(client, "\n%s : %d\n%s\n%s : %d",
+              g->players[0]->name, a->score[0], board,
+              g->players[1]->name, a->score[1]);
+   }
+   else
+   {
+      send_to(client, "\n%s : %d\n%s\n%s : %d\nAu tour de %s",
+              g->players[0]->name, a->score[0], board,
+              g->players[1]->name, a->score[1],
+              g->players[a->turn]->name);
+   }
+}
+
 void game_list(Client *client)
 {
    int count = 0;
@@ -141,7 +163,7 @@ int game_observe(Client *client, int game_id)
 
    send_to(client, "Vous observez la partie %d : %s vs %s.",
             g->id, g->players[0]->name, g->players[1]->name);
-   game_send_board(g, 0);
+   game_send_board_to(g, client, 0);
 
    return 1;
 }
@@ -175,6 +197,11 @@ void game_remove_observer(Client *client)
 /* Détache les deux joueurs, retire la partie du registre et la libère. */
 static void game_destroy(Game *g)
 {
+   for(int i = 0; i < g->nb_observers; i++)
+   {
+      g->observers[i]->observing = NULL;
+      send_to(g->observers[i], "La partie %d est terminée.", g->id);
+   }
    for(int i = 0; i < 2; i++)
    {
       g->players[i]->game = NULL;
@@ -206,6 +233,6 @@ void game_end(Game *g)
 void game_forfeit(Game *g, Client *loser)
 {
    Client *winner = g->players[0] == loser ? g->players[1] : g->players[0];
-   send_to(winner, "%s s'est déconnecté : vous gagnez par forfait !", loser->name);
+   send_to(winner, "%s s'est déconnecté : %s gagne par forfait !", loser->name, winner->name);
    game_destroy(g);
 }

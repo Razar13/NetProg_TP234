@@ -22,11 +22,15 @@ static void cmd_refuse(Client *me, char *args);
 static void cmd_cancel(Client *me, char *args);
 static void cmd_play(Client *me, char *args);
 static void cmd_msg(Client *me, char *args);
+static void cmd_parties(Client *me, char *args);
+static void cmd_observer(Client *me, char *args);
 
 /* Pour ajouter une fonctionnalité : une fonction cmd_xxx + une ligne ici. */
 static const Command commands[] = {
    {"help",     cmd_help,    "",            "affiche cette aide"},
    {"clients",  cmd_clients, "",            "liste les joueurs en ligne"},
+   {"parties",  cmd_parties, "",            "liste les parties en cours"},
+   {"observer", cmd_observer," <id>",       "observe une partie en cours"},
    {"defi",     cmd_defi,    " <pseudo>",   "défie un joueur"},
    {"accepter", cmd_accept,  "",            "accepte le défi reçu"},
    {"refuser",  cmd_refuse,  "",            "refuse le défi reçu"},
@@ -35,7 +39,6 @@ static const Command commands[] = {
    {"msg",      cmd_msg,     " <pseudo> <texte>", "message privé"},
 };
 #define NB_COMMANDS (sizeof commands / sizeof commands[0])
-
 /* ------------------------------------------------------------------ */
 
 static void cmd_help(Client *me, char *args)
@@ -70,6 +73,30 @@ static void cmd_clients(Client *me, char *args)
                               c->game ? " [en partie]" : "");
    }
    send_to(me, "%s", out);
+}
+
+static void cmd_parties(Client *me, char *args)
+{
+   (void)args;
+   game_list(me);
+}
+
+static void cmd_observer(Client *me, char *args)
+{
+   if(args == NULL)
+   {
+      send_to(me, "Usage : /observer <id>");
+      return;
+   }
+
+   int game_id = atoi(args);
+   if(game_id <= 0 || game_id > MAX_GAMES)
+   {
+      send_to(me, "ID de partie invalide (doit être entre 1 et %d).", MAX_GAMES);
+      return;
+   }
+
+   game_observe(me, game_id);
 }
 
 /* ---- Défi ---------------------------------------------------------- */
@@ -300,6 +327,10 @@ void commands_on_disconnect(Client *c)
       send_to(c->challenger, "%s s'est déconnecté : votre défi est annulé.", c->name);
       c->challenger->challenged = NULL;
       c->challenger = NULL;
+   }
+   if(c->observing)
+   {
+      game_remove_observer(c);
    }
    if(c->game)
    {
