@@ -53,6 +53,7 @@ struct Client
 {
    SOCKET sock;
    char name[NAME_SIZE];   /* vide tant que le client n'a pas envoyé son pseudo */
+   char bio[BUF_SIZE];    /* texte libre envoyé par le client avec /bio */
    char inbuf[BUF_SIZE];   /* octets reçus pas encore découpés en lignes */
    int inlen;
 

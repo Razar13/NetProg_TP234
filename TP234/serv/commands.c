@@ -24,6 +24,8 @@ static void cmd_play(Client *me, char *args);
 static void cmd_msg(Client *me, char *args);
 static void cmd_parties(Client *me, char *args);
 static void cmd_observer(Client *me, char *args);
+static void cmd_bio(Client *me, char *args);
+static void cmd_profil(Client *me, char *args);
 
 /* Pour ajouter une fonctionnalité : une fonction cmd_xxx + une ligne ici. */
 static const Command commands[] = {
@@ -37,6 +39,8 @@ static const Command commands[] = {
    {"annuler",  cmd_cancel,  "",            "retire le défi que vous avez lancé"},
    {"jouer",    cmd_play,    " <1-6>",      "joue une case de votre camp"},
    {"msg",      cmd_msg,     " <pseudo> <texte>", "message privé"},
+   {"bio",      cmd_bio,     " <texte>",    "met à jour votre bio"},
+   {"profil",   cmd_profil,  " <pseudo>",   "affiche le profil d'un joueur"},
 };
 #define NB_COMMANDS (sizeof commands / sizeof commands[0])
 /* ------------------------------------------------------------------ */
@@ -97,6 +101,40 @@ static void cmd_observer(Client *me, char *args)
    }
 
    game_observe(me, game_id);
+}
+
+static void cmd_bio(Client *me, char *args)
+{
+   if(args == NULL)
+   {
+      send_to(me, "Usage : /bio <texte>");
+      return;
+   }
+
+   strncpy(me->bio, args, sizeof me->bio - 1);
+   me->bio[sizeof me->bio - 1] = 0;   /* sécurité */
+   modifier_bio(me, me->bio);
+   send_to(me, "Bio mise à jour.");
+}
+
+static void cmd_profil(Client *me, char *args)
+{
+   if(args == NULL)
+   {
+      send_to(me, "Usage : /profil <pseudo>");
+      return;
+   }
+
+   Client *c = client_find(args);
+   if(c == NULL)
+   {
+      send_to(me, "Aucun joueur en ligne avec ce pseudo.");
+      return;
+   }
+
+   send_to(me, "Profil de %s :\n  Bio : %s\n  En partie : %s",
+           c->name, c->bio[0] ? c->bio : "(aucune bio)",
+           c->game ? "oui" : "non");
 }
 
 /* ---- Défi ---------------------------------------------------------- */

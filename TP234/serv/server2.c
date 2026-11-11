@@ -80,7 +80,7 @@ void send_to(Client *c, const char *fmt, ...)
    }
 }
 
-/* ---- Fichier des pseudos ------------------------------------------ */
+/* ---- Fichier des clients ------------------------------------------ */
 
 static int recherchePseudo(const char *pseudo)
 {
@@ -95,19 +95,20 @@ static int recherchePseudo(const char *pseudo)
 
    while(fgets(ligne, sizeof(ligne), fichier) != NULL)
    {
-      char *pseudo_fichier = strtok(ligne, ",\n");
+      char *pseudo_fichier = strtok(ligne, ",");
       if(pseudo_fichier != NULL && strcmp(pseudo_fichier, pseudo) == 0)
       {
          trouve = 1;
          break;
       }
+      char *bio_fichier = strtok(NULL, "\n");
    }
 
    fclose(fichier);
    return trouve;
 }
 
-static void enregistrerPseudo(const char *pseudo)
+static void enregistrerPseudo(const char *pseudo, const char *bio)
 {
    FILE *fichier = fopen("users.csv", "a");
    if(fichier == NULL)
@@ -115,7 +116,74 @@ static void enregistrerPseudo(const char *pseudo)
       perror("Erreur d'ouverture du fichier users.csv");
       return;
    }
-   fprintf(fichier, "%s,\n", pseudo);
+   fprintf(fichier, "%s,%s\n", pseudo, bio);
+   fclose(fichier);
+}
+
+void modifier_bio(Client *c, const char *bio)
+{
+   FILE *fichier = fopen("users.csv", "r");
+   if(fichier == NULL)
+   {
+      perror("Erreur d'ouverture du fichier users.csv");
+      return;
+   }
+
+   FILE *fichierTemp = fopen("temp.csv", "w");
+   if(fichierTemp == NULL)
+   {
+      perror("Erreur d'ouverture du fichier temporaire");
+      fclose(fichier);
+      return;
+   }
+
+   char ligne[BUF_SIZE];
+   while(fgets(ligne, sizeof(ligne), fichier) != NULL)
+   {
+      char *pseudo_fichier = strtok(ligne, ",");
+      char *pseudo = c->name;
+      char *bio_fichier = strtok(NULL, "\n");
+
+      if(pseudo_fichier != NULL && strcmp(pseudo_fichier, pseudo) == 0)
+      {
+         fprintf(fichierTemp, "%s,%s\n", pseudo, bio);
+      }
+      else
+      {
+         fprintf(fichierTemp, "%s,%s\n", pseudo_fichier, bio_fichier);
+      }
+   }
+
+   fclose(fichier);
+   fclose(fichierTemp);
+
+   remove("users.csv");
+   rename("temp.csv", "users.csv");
+}
+
+void mettre_a_jour_bio(Client *c)
+{
+   FILE *fichier = fopen("users.csv", "r");
+   if(fichier == NULL)
+   {
+      perror("Erreur d'ouverture du fichier users.csv");
+      return -1;
+   }
+
+   char ligne[BUF_SIZE];
+   while(fgets(ligne, sizeof(ligne), fichier) != NULL)
+   {
+      char *pseudo_fichier = strtok(ligne, ",");
+      char *bio_fichier = strtok(NULL, "\n");
+
+      if(pseudo_fichier != NULL && strcmp(pseudo_fichier, c->name) == 0)
+      {
+         strncpy(c->bio, bio_fichier, sizeof(c->bio) - 1);
+         c->bio[sizeof(c->bio) - 1] = '\0'; // S'assurer que la chaîne est terminée par un caractère nul
+         break;
+      }
+   }
+
    fclose(fichier);
 }
 
@@ -150,7 +218,11 @@ static int register_client(Client *c, const char *name)
    strncpy(c->name, name, NAME_SIZE - 1);
    if(!recherchePseudo(c->name))
    {
-      enregistrerPseudo(c->name);
+      enregistrerPseudo(c->name, "");
+   }
+   else
+   {
+      mettre_a_jour_bio(c);
    }
 
    send_to(c, "Bienvenue %s ! Tapez /help pour la liste des commandes.", c->name);
