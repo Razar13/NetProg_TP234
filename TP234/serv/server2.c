@@ -6,7 +6,12 @@
 #include <time.h>
 
 #include "server2.h"
+#include "game.h"
 #include "commands.h"
+
+#define USERS_FILE "users.csv"
+#define TEMP_FILE  "temp.csv"
+#define LINE_SIZE  4096   /* une ligne du CSV : pseudo;bio;ami1,ami2,... */
 
 /* Clients alloués avec malloc : un Client* reste valide même quand on
    décale le tableau, c'est ce qui permet à game->players[] de pointer dessus. */
@@ -80,38 +85,209 @@ void send_to(Client *c, const char *fmt, ...)
    }
 }
 
-/* ---- Fichier des clients ------------------------------------------ */
+/* ---- Listes de noms (amis, demandes d'ami) ------------------------- */
+/* Chaque nom est une copie (strdup) appartenant à la liste : plus aucun
+   pointeur vers inbuf, vers un buffer local ou vers un autre Client. */
 
-static int recherchePseudo(const char *pseudo)
+int name_list_contains(char **list, int n, const char *s)
 {
-   FILE *fichier = fopen("users.csv", "r");
+   for(int i = 0; i < n; i++)
+   {
+      if(strcmp(list[i], s) == 0) return 1;
+   }
+   return 0;
+}
+
+int name_list_add(char ***list, int *n, const char *s)
+{
+   char *copy = strdup(s);
+   if(copy == NULL)
+   {
+      perror("strdup()");
+      return -1;
+   }
+   char **tmp = realloc(*list, (*n + 1) * sizeof(char *));
+   if(tmp == NULL)
+   {
+      perror("realloc()");
+      free(copy);
+      return -1;
+   }
+   *list = tmp;
+   (*list)[(*n)++] = copy;
+   return 0;
+}
+
+/* Renvoie 1 si le nom a été retiré, 0 s'il n'y était pas. */
+int name_list_remove(char ***list, int *n, const char *s)
+{
+   for(int i = 0; i < *n; i++)
+   {
+      if(strcmp((*list)[i], s) == 0)
+      {
+         free((*list)[i]);
+         memmove(*list + i, *list + i + 1, (*n - i - 1) * sizeof(char *));
+         (*n)--;
+         if(*n == 0)
+         {
+            free(*list);
+            *list = NULL;
+         }
+         return 1;
+      }
+   }
+   return 0;
+}
+
+void name_list_free(char ***list, int *n)
+{
+   for(int i = 0; i < *n; i++)
+   {
+      free((*list)[i]);
+   }
+   free(*list);
+   *list = NULL;
+   *n = 0;
+}
+
+/* ---- Fichier des clients ------------------------------------------ */
+/* Format d'une ligne : pseudo;bio;ami1,ami2,ami3
+   On n'utilise PAS strtok : il saute les délimiteurs consécutifs, donc
+   "pseudo;;" (bio vide) serait mal lu. */
+
+typedef struct
+{
+   char name[NAME_SIZE];
+   char bio[BUF_SIZE];
+   char friends[LINE_SIZE];   /* "ami1,ami2" ou "" */
+} UserRecord;
+
+/* Découpe une ligne du CSV. Renvoie 0 si la ligne est inutilisable. */
+static int parse_line(char *ligne, UserRecord *r)
+{
+   ligne[strcspn(ligne, "\r\n")] = 0;
+
+   char *bio = NULL;
+   char *amis = NULL;
+   char *sep = strchr(ligne, ';');
+   if(sep != NULL)
+   {
+      *sep = 0;
+      bio = sep + 1;
+      sep = strchr(bio, ';');
+      if(sep != NULL)
+      {
+         *sep = 0;
+         amis = sep + 1;
+      }
+   }
+
+   snprintf(r->name, sizeof r->name, "%s", ligne);
+   snprintf(r->bio, sizeof r->bio, "%s", bio ? bio : "");
+   snprintf(r->friends, sizeof r->friends, "%s", amis ? amis : "");
+   return r->name[0] != 0;
+}
+
+/* Ajoute (ajout = 1) ou retire (ajout = 0) un ami dans une chaîne "a,b,c".
+   Pas de virgule finale, pas de doublon. */
+static void friends_edit(char *csv, size_t size, const char *ami, int ajout)
+{
+   char old[LINE_SIZE];
+   snprintf(old, sizeof old, "%s", csv);
+   csv[0] = 0;
+   size_t len = 0;
+
+   char *p = old;
+   while(p != NULL)
+   {
+      char *next = strchr(p, ',');
+      if(next != NULL) *next++ = 0;
+
+      if(*p && strcmp(p, ami) != 0 && len < size)
+      {
+         len += (size_t)snprintf(csv + len, size - len, "%s%s", len ? "," : "", p);
+      }
+      p = next;
+   }
+   if(ajout && len < size)
+   {
+      snprintf(csv + len, size - len, "%s%s", len ? "," : "", ami);
+   }
+}
+
+static int lire_utilisateur(const char *pseudo, UserRecord *out)
+{
+   FILE *fichier = fopen(USERS_FILE, "r");
    if(fichier == NULL)
    {
       return 0;   /* pas encore de fichier : aucun pseudo connu */
    }
 
-   char ligne[BUF_SIZE];
+   char ligne[LINE_SIZE];
    int trouve = 0;
-
-   while(fgets(ligne, sizeof(ligne), fichier) != NULL)
+   while(!trouve && fgets(ligne, sizeof ligne, fichier) != NULL)
    {
-      char *pseudo_fichier = strtok(ligne, ";");
-      if(pseudo_fichier != NULL && strcmp(pseudo_fichier, pseudo) == 0)
+      UserRecord r;
+      if(parse_line(ligne, &r) && strcmp(r.name, pseudo) == 0)
       {
+         if(out) *out = r;
          trouve = 1;
-         break;
       }
-      char *bio_fichier = strtok(NULL, ";");
-      char *amis_fichier = strtok(NULL, "\n");
    }
-
    fclose(fichier);
    return trouve;
 }
 
+/* Réécrit users.csv en modifiant la ligne de `pseudo` :
+   - new_bio != NULL : remplace la bio
+   - ami != NULL     : ajoute (ajout = 1) ou retire (ajout = 0) cet ami */
+static void fichier_modifier(const char *pseudo, const char *new_bio,
+                             const char *ami, int ajout)
+{
+   FILE *fichier = fopen(USERS_FILE, "r");
+   if(fichier == NULL)
+   {
+      perror("Erreur d'ouverture du fichier users.csv");
+      return;
+   }
+
+   FILE *fichierTemp = fopen(TEMP_FILE, "w");
+   if(fichierTemp == NULL)
+   {
+      perror("Erreur d'ouverture du fichier temporaire");
+      fclose(fichier);
+      return;
+   }
+
+   char ligne[LINE_SIZE];
+   while(fgets(ligne, sizeof ligne, fichier) != NULL)
+   {
+      UserRecord r;
+      if(!parse_line(ligne, &r)) continue;
+
+      if(strcmp(r.name, pseudo) == 0)
+      {
+         if(new_bio) snprintf(r.bio, sizeof r.bio, "%s", new_bio);
+         if(ami) friends_edit(r.friends, sizeof r.friends, ami, ajout);
+      }
+      fprintf(fichierTemp, "%s;%s;%s\n", r.name, r.bio, r.friends);
+   }
+
+   fclose(fichier);
+   fclose(fichierTemp);
+
+   remove(USERS_FILE);
+   rename(TEMP_FILE, USERS_FILE);
+}
+
+static int recherchePseudo(const char *pseudo)
+{
+   return lire_utilisateur(pseudo, NULL);
+}
+
 static void enregistrerPseudo(const char *pseudo)
 {
-   FILE *fichier = fopen("users.csv", "a");
+   FILE *fichier = fopen(USERS_FILE, "a");
    if(fichier == NULL)
    {
       perror("Erreur d'ouverture du fichier users.csv");
@@ -121,278 +297,94 @@ static void enregistrerPseudo(const char *pseudo)
    fclose(fichier);
 }
 
-void ajouter_ami(Client *c, Client *ami)
+/* ---- Amis / bio ---------------------------------------------------- */
+
+void ajouter_ami(Client *c, char *ami)
 {
+   if(name_list_contains(c->friends, c->nb_friends, ami))
+   {
+      return;   /* déjà ami */
+   }
+
+   if(name_list_add(&c->friends, &c->nb_friends, ami) < 0) return;
+
+   /* L'ami n'est pas forcément en ligne : dans ce cas seul le fichier change. */
+   Client *ami_client = client_find(ami);
+   if(ami_client != NULL &&
+      !name_list_contains(ami_client->friends, ami_client->nb_friends, c->name))
+   {
+      name_list_add(&ami_client->friends, &ami_client->nb_friends, c->name);
+   }
+
+   fichier_modifier(c->name, NULL, ami, 1);
+   fichier_modifier(ami, NULL, c->name, 1);
+
    
-
-   for(int i = 0; i < c->nb_friends; i++)
-   {
-      if(c->friends[i] == ami)
-      {
-         return; // L'ami est déjà dans la liste
-      }
-   }
-
-   Client **new_friends = realloc(c->friends, (c->nb_friends + 1) * sizeof(Client*));
-   if(new_friends == NULL)
-   {
-      perror("Erreur d'allocation mémoire pour la liste d'amis");
-      return;
-   }
-   c->friends = new_friends;
-   c->friends[c->nb_friends++] = ami;
-
-   Client **new_friends_ami = realloc(ami->friends, (ami->nb_friends + 1) * sizeof(Client*));
-   if(new_friends_ami == NULL)
-   {
-      perror("Erreur d'allocation mémoire pour la liste d'amis");
-      return;
-   }
-   ami->friends = new_friends_ami;
-   ami->friends[ami->nb_friends++] = c;
-
-
-   FILE *fichier = fopen("users.csv", "r");
-   if(fichier == NULL)
-   {
-      perror("Erreur d'ouverture du fichier users.csv");
-      return;
-   }
-
-   FILE *fichierTemp = fopen("temp.csv", "w");
-   if(fichierTemp == NULL)
-   {
-      perror("Erreur d'ouverture du fichier temporaire");
-      fclose(fichier);
-      return;
-   }
-
-   char ligne[BUF_SIZE];
-   while(fgets(ligne, sizeof(ligne), fichier) != NULL)
-   {
-      char *pseudo_fichier = strtok(ligne, ";");
-      char *bio_fichier = strtok(NULL, ";");
-      char *amis_fichier = strtok(NULL, "\n");
-
-      if(pseudo_fichier != NULL && strcmp(pseudo_fichier, c->name) == 0)
-      {
-         fprintf(fichierTemp, "%s;%s;", pseudo_fichier, bio_fichier);
-         for(int i = 0; i < c->nb_friends; i++)
-         {
-            fprintf(fichierTemp, "%s", c->friends[i]->name);
-            if(i < c->nb_friends - 1)
-            {
-               fprintf(fichierTemp, ",");
-            }
-         }
-         fprintf(fichierTemp, "\n");
-      }
-      else if(pseudo_fichier != NULL && strcmp(pseudo_fichier, ami->name) == 0)
-      {
-         fprintf(fichierTemp, "%s;%s;", pseudo_fichier, bio_fichier);
-         for(int i = 0; i < ami->nb_friends; i++)
-         {
-            fprintf(fichierTemp, "%s", ami->friends[i]->name);
-            if(i < ami->nb_friends - 1)
-            {
-               fprintf(fichierTemp, ",");
-            }
-         }
-         fprintf(fichierTemp, "\n");
-      }
-      else
-      {
-         fprintf(fichierTemp, "%s;%s;%s\n", pseudo_fichier, bio_fichier, amis_fichier);
-      }
-   }
-
-   fclose(fichier);
-   fclose(fichierTemp);
-
-   remove("users.csv");
-   rename("temp.csv", "users.csv");
 }
 
-void supprimer_ami(Client *c, Client *ami)
+void supprimer_ami(Client *c, char *ami)
 {
-   int index = -1;
-   for(int i = 0; i < c->nb_friends; i++)
-   {
-      if(c->friends[i] == ami)
-      {
-         index = i;
-         break;
-      }
-   }
-   if(index < 0) return;
+   /* `ami` peut pointer dans inbuf : on ne garde rien de lui après le retour. */
+   if(!name_list_remove(&c->friends, &c->nb_friends, ami)) return;
 
-   for(int i = index; i < c->nb_friends - 1; i++)
+   Client *ami_client = client_find(ami);
+   if(ami_client != NULL)
    {
-      c->friends[i] = c->friends[i + 1];
-   }
-   c->nb_friends--;
-   c->friends = realloc(c->friends, c->nb_friends * sizeof(Client*));
-
-   FILE *fichier = fopen("users.csv", "r");
-   if(fichier == NULL)
-   {
-      perror("Erreur d'ouverture du fichier users.csv");
-      return;
+      name_list_remove(&ami_client->friends, &ami_client->nb_friends, c->name);
    }
 
-   FILE *fichierTemp = fopen("temp.csv", "w");
-   if(fichierTemp == NULL)
+   fichier_modifier(c->name, NULL, ami, 0);
+   fichier_modifier(ami, NULL, c->name, 0);
+
+   Game *g = c->game;
+   if(g != NULL && g->private)
    {
-      perror("Erreur d'ouverture du fichier temporaire");
-      fclose(fichier);
-      return;
+      game_remove_observer(ami_client);
    }
-
-   char ligne[BUF_SIZE];
-   while(fgets(ligne, sizeof(ligne), fichier) != NULL)
-   {
-      char *pseudo_fichier = strtok(ligne, ";");
-      char *bio_fichier = strtok(NULL, ";");
-
-      if(pseudo_fichier != NULL && strcmp(pseudo_fichier, c->name) == 0)
-      {
-         fprintf(fichierTemp, "%s;%s;", pseudo_fichier, bio_fichier);
-         for(int i = 0; i < c->nb_friends; i++)
-         {
-            fprintf(fichierTemp, "%s", c->friends[i]->name);
-            if(i < c->nb_friends - 1)
-            {
-               fprintf(fichierTemp, ",");
-            }
-         }
-         fprintf(fichierTemp, "\n");
-      }
-      else
-      {
-         fprintf(fichierTemp, "%s;%s;\n", pseudo_fichier, bio_fichier);
-      }
-   }
-
-   fclose(fichier);
-   fclose(fichierTemp);
-
-   remove("users.csv");
-   rename("temp.csv", "users.csv");
-
 }
-
-
 
 void modifier_bio(Client *c, const char *bio)
 {
-   FILE *fichier = fopen("users.csv", "r");
-   if(fichier == NULL)
+   /* ';' et retour à la ligne casseraient le format CSV */
+   char propre[BUF_SIZE];
+   snprintf(propre, sizeof propre, "%s", bio);
+   for(char *p = propre; *p; p++)
    {
-      perror("Erreur d'ouverture du fichier users.csv");
-      return;
+      if(*p == ';' || *p == '\n' || *p == '\r') *p = ' ';
    }
 
-   FILE *fichierTemp = fopen("temp.csv", "w");
-   if(fichierTemp == NULL)
-   {
-      perror("Erreur d'ouverture du fichier temporaire");
-      fclose(fichier);
-      return;
-   }
-
-   char ligne[BUF_SIZE];
-   while(fgets(ligne, sizeof(ligne), fichier) != NULL)
-   {
-      char *pseudo_fichier = strtok(ligne, ";");
-      char *pseudo = c->name;
-      char *bio_fichier = strtok(NULL, ";");
-      char *liste_amis_fichier = strtok(NULL, "\n");
-
-      if(pseudo_fichier != NULL && strcmp(pseudo_fichier, pseudo) == 0)
-      {
-         fprintf(fichierTemp, "%s;%s;%s\n", pseudo, bio, liste_amis_fichier ? liste_amis_fichier : "");
-      }
-      else
-      {
-         fprintf(fichierTemp, "%s;%s;%s\n", pseudo_fichier, bio_fichier, liste_amis_fichier ? liste_amis_fichier : "");
-      }
-   }
-
-   fclose(fichier);
-   fclose(fichierTemp);
-
-   remove("users.csv");
-   rename("temp.csv", "users.csv");
+   snprintf(c->bio, sizeof c->bio, "%s", propre);
+   fichier_modifier(c->name, propre, NULL, 0);
 }
 
 void mettre_a_jour_amis(Client *c)
 {
-   FILE *fichier = fopen("users.csv", "r");
-   if(fichier == NULL)
-   {
-      perror("Erreur d'ouverture du fichier users.csv");
-      return;
-   }
+   name_list_free(&c->friends, &c->nb_friends);
 
-   char ligne[BUF_SIZE];
-   while(fgets(ligne, sizeof(ligne), fichier) != NULL)
-   {
-      char *pseudo_fichier = strtok(ligne, ";");
-      char *bio_fichier = strtok(NULL, ";");
-      char *amis_fichier = strtok(NULL, "\n");
+   UserRecord r;
+   if(!lire_utilisateur(c->name, &r)) return;
 
-      if(pseudo_fichier != NULL && strcmp(pseudo_fichier, c->name) == 0)
+   char *p = r.friends;
+   while(p != NULL)
+   {
+      char *next = strchr(p, ',');
+      if(next != NULL) *next++ = 0;
+
+      if(*p && recherchePseudo(p))
       {
-         c->nb_friends = 0;
-         free(c->friends);
-         c->friends = NULL;
-
-         if(amis_fichier != NULL && strlen(amis_fichier) > 0)
-         {
-            char *ami_name = strtok(amis_fichier, ",");
-            while(ami_name != NULL)
-            {
-               Client *ami_client = client_find(ami_name);
-               if(ami_client != NULL)
-               {
-                  c->friends = realloc(c->friends, (c->nb_friends + 1) * sizeof(Client*));
-                  c->friends[c->nb_friends++] = ami_client;
-               }
-               ami_name = strtok(NULL, ",");
-            }
-         }
-         break;
+         name_list_add(&c->friends, &c->nb_friends, p);   /* copie */
       }
+      p = next;
    }
-
-   fclose(fichier);
 }
 
 void mettre_a_jour_bio(Client *c)
 {
-   FILE *fichier = fopen("users.csv", "r");
-   if(fichier == NULL)
+   UserRecord r;
+   if(lire_utilisateur(c->name, &r))
    {
-      perror("Erreur d'ouverture du fichier users.csv");
-      return -1;
+      snprintf(c->bio, sizeof c->bio, "%s", r.bio);
    }
-
-   char ligne[BUF_SIZE];
-   while(fgets(ligne, sizeof(ligne), fichier) != NULL)
-   {
-      char *pseudo_fichier = strtok(ligne, ";");
-      char *bio_fichier = strtok(NULL, ";");
-      char *amis_fichier = strtok(NULL, "\n");
-
-      if(pseudo_fichier != NULL && strcmp(pseudo_fichier, c->name) == 0)
-      {
-         strncpy(c->bio, bio_fichier, sizeof(c->bio) - 1);
-         c->bio[sizeof(c->bio) - 1] = '\0'; // S'assurer que la chaîne est terminée par un caractère nul
-         break;
-      }
-   }
-
-   fclose(fichier);
 }
 
 /* ---- Connexion / déconnexion d'un client -------------------------- */
@@ -403,8 +395,9 @@ static int pseudo_valide(const char *name)
    if(len == 0 || len >= NAME_SIZE) return 0;
    for(size_t i = 0; i < len; i++)
    {
-      /* pas d'espace/caractère de contrôle (cassent /defi), pas de virgule (CSV) */
-      if((unsigned char)name[i] <= ' ' || name[i] == ',') return 0;
+      /* pas d'espace/caractère de contrôle (cassent /defi),
+         pas de virgule ni de point-virgule (CSV) */
+      if((unsigned char)name[i] <= ' ' || name[i] == ',' || name[i] == ';') return 0;
    }
    return 1;
 }
@@ -414,7 +407,7 @@ static int register_client(Client *c, const char *name)
 {
    if(!pseudo_valide(name))
    {
-      send_to(c, "Pseudo invalide (1 à %d caractères, sans espace ni virgule).", NAME_SIZE - 1);
+      send_to(c, "Pseudo invalide (1 à %d caractères, sans espace, virgule ni point-virgule).", NAME_SIZE - 1);
       return -1;
    }
    if(client_find(name) != NULL)
@@ -469,6 +462,13 @@ static void accept_client(SOCKET sock)
    clients[nb_clients++] = c;
 }
 
+static void free_client(Client *c)
+{
+   name_list_free(&c->friends, &c->nb_friends);
+   name_list_free(&c->friend_requests, &c->nb_friend_requests);
+   free(c);
+}
+
 static void disconnect_client(Client *c)
 {
    char name[NAME_SIZE];
@@ -489,7 +489,7 @@ static void disconnect_client(Client *c)
          break;
       }
    }
-   free(c);
+   free_client(c);
 
    if(name[0])
    {
@@ -638,7 +638,7 @@ static void app(void)
    for(int i = 0; i < nb_clients; i++)
    {
       closesocket(clients[i]->sock);
-      free(clients[i]);
+      free_client(clients[i]);
    }
    nb_clients = 0;
    end_connection(sock);

@@ -37,6 +37,7 @@ Game *game_create(Client *challenger, Client *challenged, int direction)
    g->id = next_id++;
    g->players[0] = challenger;
    g->players[1] = challenged;
+   g->private = 0; /* par défaut, la partie est publique */
    awale_init(&g->state, rand() % 2, direction);   /* le serveur tire au sort qui commence */
 
    /* C'est ce lien qui fait que la partie n'appartient qu'à ces deux joueurs */
@@ -146,12 +147,28 @@ int game_observe(Client *client, int game_id)
       return 0;
    }
 
-   if(client->game!=NULL || client->observing!=NULL)
+   if(client->game != NULL || client->observing != NULL)
    {
       send_to(client, "Vous êtes déjà dans une partie ou en train d'observer une partie.");
       return 0;
    }
 
+   if(g->private == 1)
+   {
+      Client *p0 = g->players[0];
+      Client *p1 = g->players[1];
+
+      int est_ami = name_list_contains(p0->friends, p0->nb_friends, client->name)
+                 || name_list_contains(p1->friends, p1->nb_friends, client->name);
+
+      if(!est_ami)
+      {
+         send_to(client, "La partie %d est privée : vous n'êtes pas ami avec les joueurs.", game_id);
+         return 0;
+      }
+   }
+
+   /* ce test était contourné pour les parties privées */
    if(g->nb_observers >= MAX_OBSERVERS)
    {
       send_to(client, "La partie %d a déjà trop d'observateurs.", game_id);
@@ -162,7 +179,7 @@ int game_observe(Client *client, int game_id)
    client->observing = g;
 
    send_to(client, "Vous observez la partie %d : %s vs %s.",
-            g->id, g->players[0]->name, g->players[1]->name);
+           g->id, g->players[0]->name, g->players[1]->name);
    game_send_board_to(g, client, 0);
 
    return 1;
