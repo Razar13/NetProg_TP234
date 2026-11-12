@@ -18,7 +18,7 @@ static Game *game_find(int id)
    return NULL;
 }
 
-Game *game_create(Client *challenger, Client *challenged)
+Game *game_create(Client *challenger, Client *challenged, int direction)
 {
    int slot = -1;
    for(int i = 0; i < MAX_GAMES; i++)
@@ -37,7 +37,7 @@ Game *game_create(Client *challenger, Client *challenged)
    g->id = next_id++;
    g->players[0] = challenger;
    g->players[1] = challenged;
-   awale_init(&g->state, rand() % 2);   /* le serveur tire au sort qui commence */
+   awale_init(&g->state, rand() % 2, direction);   /* le serveur tire au sort qui commence */
 
    /* C'est ce lien qui fait que la partie n'appartient qu'à ces deux joueurs */
    challenger->game = g;

@@ -17,7 +17,7 @@ static int side_total(const int *board, int side)
 /* Sème les graines de la case pit sur board (sans capture).
    La case de départ est sautée si on fait un tour complet.
    Renvoie la dernière case semée. */
-static int sow(int *board, int pit)
+static int sow(const Awale *a, int *board, int pit)
 {
    int n = board[pit];
    int j = pit;
@@ -25,7 +25,9 @@ static int sow(int *board, int pit)
 
    while(n > 0)
    {
-      j = (j + 1) % 12;
+      if(a->direction == 0) j = (j + 1) % 12;
+      else j = (j + 11) % 12;  /* sens inverse */
+      
       if(j == pit)
       {
          continue;
@@ -36,7 +38,7 @@ static int sow(int *board, int pit)
    return j;
 }
 
-void awale_init(Awale *a, int first)
+void awale_init(Awale *a, int first, int direction)
 {
    for(int i = 0; i < 12; i++)
    {
@@ -45,6 +47,7 @@ void awale_init(Awale *a, int first)
    a->score[0] = 0;
    a->score[1] = 0;
    a->turn = first;
+   a->direction = direction;
 }
 
 int awale_legal(const Awale *a, int pit)
@@ -60,7 +63,7 @@ int awale_legal(const Awale *a, int pit)
    {
       int tmp[12];
       memcpy(tmp, a->board, sizeof tmp);    /* on simule le coup dans un board temporaire (tmp) */
-      sow(tmp, pit);
+      sow(a,tmp, pit);
       if(side_total(tmp, opp) == 0) return 0;
    }
    return 1;
@@ -69,7 +72,7 @@ int awale_legal(const Awale *a, int pit)
 int awale_play(Awale *a, int pit)
 {
    int opp = 1 - a->turn;
-   int last = sow(a->board, pit);
+   int last = sow(a, a->board, pit);
    int captured = 0;
 
    /* Capture : seulement si on finit chez l'adversaire. On remonte en

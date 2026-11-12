@@ -16,10 +16,11 @@ typedef struct
    int board[12];
    int score[2];
    int turn;        /* 0 ou 1 : joueur qui doit jouer */
+   int direction;   /* 0 = sens normal, 1 = sens inverse (pour observer la partie) */
 } Awale;
 
 /* Plateau initial (4 graines partout). first = joueur qui commence. */
-void awale_init(Awale *a, int first);
+void awale_init(Awale *a, int first, int direction);
 
 /* 1 si le joueur dont c'est le tour peut jouer la case pit (0..11). */
 int awale_legal(const Awale *a, int pit);

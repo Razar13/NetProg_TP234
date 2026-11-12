@@ -62,6 +62,12 @@ struct Client
 
    Client *challenger;     /* qui m'a défié (en attente de ma réponse), NULL sinon */
    Client *challenged;     /* qui j'ai défié (en attente de sa réponse), NULL sinon */
+
+   Client **friends;         /* tableau de pointeurs vers les clients amis */
+   int nb_friends;           /* nombre d'amis dans le tableau */
+
+   Client **friend_requests;    /* tableau de pointeurs vers les clients qui m'ont demandé en ami */
+   int nb_friend_requests;      /* nombre de demandes d'ami dans le tableau */
 };
 
 struct Game

@@ -26,6 +26,10 @@ static void cmd_parties(Client *me, char *args);
 static void cmd_observer(Client *me, char *args);
 static void cmd_bio(Client *me, char *args);
 static void cmd_profil(Client *me, char *args);
+static void cmd_ami(Client *me, char *args);
+static void cmd_supprimer(Client *me, char *args);
+static void cmd_accept_ami(Client *me, char *args);
+static void cmd_refuser_ami(Client *me, char *args);
 
 /* Pour ajouter une fonctionnalité : une fonction cmd_xxx + une ligne ici. */
 static const Command commands[] = {
@@ -34,13 +38,17 @@ static const Command commands[] = {
    {"parties",  cmd_parties, "",            "liste les parties en cours"},
    {"observer", cmd_observer," <id>",       "observe une partie en cours"},
    {"defi",     cmd_defi,    " <pseudo>",   "défie un joueur"},
-   {"accepter", cmd_accept,  "",            "accepte le défi reçu"},
+   {"accepter", cmd_accept,  " <direction>",            "accepte le défi reçu et indique le sens de jeu (0 = horaire, 1 = antihoraire)"},
    {"refuser",  cmd_refuse,  "",            "refuse le défi reçu"},
    {"annuler",  cmd_cancel,  "",            "retire le défi que vous avez lancé"},
    {"jouer",    cmd_play,    " <1-6>",      "joue une case de votre camp"},
    {"msg",      cmd_msg,     " <pseudo> <texte>", "message privé"},
    {"bio",      cmd_bio,     " <texte>",    "met à jour votre bio"},
    {"profil",   cmd_profil,  " <pseudo>",   "affiche le profil d'un joueur"},
+   {"ami",      cmd_ami,     " <pseudo>",   "ajoute un joueur à votre liste d'amis"},
+   {"accepter_ami", cmd_accept_ami, " <pseudo> ", "accepte une demande d'ami"},
+   {"refuser_ami", cmd_refuser_ami, " <pseudo> ", "refuse une demande d'ami"},
+   {"supprimer",cmd_supprimer," <pseudo>",  "supprime un joueur de votre liste d'amis"},
 };
 #define NB_COMMANDS (sizeof commands / sizeof commands[0])
 /* ------------------------------------------------------------------ */
@@ -117,6 +125,151 @@ static void cmd_bio(Client *me, char *args)
    send_to(me, "Bio mise à jour.");
 }
 
+/* ---- Liste d'amis ------------------------------------------------- */
+
+static void cmd_ami(Client *me, char *args)
+{
+   if(args == NULL)
+   {
+      send_to(me, "Usage : /amis <pseudo>");
+      return;
+   }
+
+   Client *other = client_find(args);
+   if(other == NULL || other == me)
+   {
+      send_to(me, "Tu ne peux pas ajouter ce joueur à ta liste d'amis (fait un effort stp) !");
+      return;
+   }
+
+   for(int i = 0; i < other->nb_friend_requests; i++)
+   {
+      if(other->friend_requests[i] == me)
+      {
+         send_to(me, "Vous avez déjà envoyé une demande d'ami à %s.", other->name);
+         return;
+      }
+   }
+
+   Client **new_requests = realloc(other->friend_requests, (other->nb_friend_requests + 1) * sizeof(Client*));
+   if(new_requests == NULL)
+   {
+      perror("Erreur d'allocation mémoire pour la liste d'amis");
+      return;
+   }
+   other->friend_requests = new_requests;
+   other->friend_requests[other->nb_friend_requests++] = me;
+
+   send_to(me, "Demande d'ami envoyé à %s. ", other->name);
+   send_to(other, "%s vous demande en ami ! Tapez /accepter_ami <pseudo> ou /refuser_ami <pseudo> si vous avez peur de lui.", me->name);
+}
+
+static void cmd_supprimer(Client *me, char *args)
+{
+   if(args == NULL)
+   {
+      send_to(me, "Usage : /supprimer <pseudo>");
+      return;
+   }
+
+   Client *c = client_find(args);
+   if(c == NULL || c == me)
+   {
+      send_to(me, "Impossible de supprimer ce joueur de votre liste d'amis.");
+      return;
+   }
+
+   supprimer_ami(me, c);
+   supprimer_ami(c, me);
+
+   send_to(me, "%s a été supprimé de votre liste d'amis.", c->name);
+   send_to(c, "%s vous a supprimé de sa liste d'amis car il ne vous aime plus.", me->name);
+}
+
+static void cmd_accept_ami(Client *me, char *args)
+{
+   if(args == NULL)
+   {
+      send_to(me, "Usage : /accepter_ami <pseudo>");
+      return;
+   }
+
+   Client *ami = client_find(args);
+   if(ami == NULL)
+   {
+      send_to(me, "Personne ne vous a demandé en ami :(.");
+      return;
+   }
+
+   int trouver = 0;
+
+   for(int i = 0; i < me->nb_friend_requests; i++)
+   {
+      if(me->friend_requests[i] == ami)
+      {
+         for(int j = i; j < me->nb_friend_requests - 1; j++)
+         {
+            me->friend_requests[j] = me->friend_requests[j + 1];
+         }
+         me->friend_requests[me->nb_friend_requests - 1] = NULL;
+         me->nb_friend_requests--;
+         trouver = 1;
+         break;
+      }
+   }
+
+   if(!trouver)
+   {
+      send_to(me, "%s ne vous pas a demandé en ami :(.", ami->name);
+      return;
+   }
+
+   ajouter_ami(me, ami);
+   send_to(me, "Vous avez accepté %s comme ami.", ami->name);
+   send_to(ami, "%s a accepté votre demande d'ami.", me->name);
+}
+
+static void cmd_refuser_ami(Client *me, char *args)
+{
+   if(args == NULL)
+   {
+      send_to(me, "Usage : /refuser_ami <pseudo>");
+      return;
+   }
+
+   Client *ami = client_find(args);
+   if(ami == NULL)
+   {
+      send_to(me, "Ce joueur n'existe pas.");
+      return;
+   }
+   int trouver = 0;
+
+   for(int i = 0; i < me->nb_friend_requests; i++)
+   {
+      if(me->friend_requests[i] == ami)
+      {
+         for(int j = i; j < me->nb_friend_requests - 1; j++)
+         {
+            me->friend_requests[j] = me->friend_requests[j + 1];
+         }
+         me->friend_requests[me->nb_friend_requests - 1] = NULL;
+         me->nb_friend_requests--;
+         trouver = 1;
+         break;
+      }
+   }
+
+   if(!trouver)
+   {
+      send_to(me, "%s ne vous pas a demandé en ami :(.", ami->name);
+      return;
+   }
+
+   send_to(ami, "%s a refusé votre demande d'ami.", me->name);
+   send_to(me, "Demande d'ami refusée.");
+}
+
 static void cmd_profil(Client *me, char *args)
 {
    if(args == NULL)
@@ -132,8 +285,20 @@ static void cmd_profil(Client *me, char *args)
       return;
    }
 
-   send_to(me, "Profil de %s :\n  Bio : %s\n  En partie : %s",
+   char liste_amis[BUF_SIZE];
+   size_t len = 0;
+   for(int i = 0; i < c->nb_friends && len < sizeof liste_amis; i++)
+   {
+      len += (size_t)snprintf(liste_amis + len, sizeof liste_amis - len, "%s%s", c->friends[i]->name, (i < c->nb_friends - 1) ? ", " : "");
+   }
+   if (c->nb_friends == 0)
+   {
+      snprintf(liste_amis, sizeof liste_amis, "(aucun ami :()");
+   }
+
+   send_to(me, "Profil de %s :\n  Bio : %s\n Liste d'amis : %s\n En partie : %s",
            c->name, c->bio[0] ? c->bio : "(aucune bio)",
+           liste_amis,
            c->game ? "oui" : "non");
 }
 
@@ -172,12 +337,11 @@ static void cmd_defi(Client *me, char *args)
    me->challenged = other;
    other->challenger = me;
    send_to(me, "Défi envoyé à %s. (si vous regrettez, vous pouvez toujours /annuler pour le retirer)", other->name);
-   send_to(other, "%s vous défie ! Tapez /accepter ou /refuser si vous avez peur de perdre.", me->name);
+   send_to(other, "%s vous défie ! Tapez /accepter <0 (sens horaire)|1 (sens antihoraire)> ou /refuser si vous avez peur de perdre.", me->name);
 }
 
 static void cmd_accept(Client *me, char *args)
 {
-   (void)args;
    Client *opp = me->challenger;
    if(opp == NULL)
    {
@@ -185,7 +349,15 @@ static void cmd_accept(Client *me, char *args)
       return;
    }
 
-   Game *g = game_create(opp, me);
+   char *end = NULL;
+   int direction = args ? strtol(args, &end, 10) : 0;
+   if(args == NULL || end == args || *end != 0 || (direction != 0 && direction != 1))
+   {
+      send_to(me, "Usage : /accepter <0|1>");
+      return;
+   }
+
+   Game *g = game_create(opp, me, direction);
    if(g == NULL)
    {
       send_to(me, "Trop de parties en cours, réessayez plus tard.");

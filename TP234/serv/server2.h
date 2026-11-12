@@ -11,6 +11,10 @@ Client *client_find(const char *name);   /* par pseudo, NULL si absent */
 int client_count(void);
 Client *client_at(int i);
 void modifier_bio(Client *c, const char *bio); /* permet de modifier la bio d'un client */
+void ajouter_ami(Client *c, Client *ami); /* permet d'ajouter un ami à la liste d'amis d'un client */
+void supprimer_ami(Client *c, Client *ami); /* permet de supprimer un ami de la liste d'amis d'un client */
+
 void mettre_a_jour_bio(Client *c); /* permet de mettre à jour la bio d'un client à sa connexion */
+void mettre_a_jour_amis(Client *c); /* permet de mettre à jour la liste d'amis d'un client à sa connexion */
 
 #endif /* guard */

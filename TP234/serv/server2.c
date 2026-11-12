@@ -95,20 +95,21 @@ static int recherchePseudo(const char *pseudo)
 
    while(fgets(ligne, sizeof(ligne), fichier) != NULL)
    {
-      char *pseudo_fichier = strtok(ligne, ",");
+      char *pseudo_fichier = strtok(ligne, ";");
       if(pseudo_fichier != NULL && strcmp(pseudo_fichier, pseudo) == 0)
       {
          trouve = 1;
          break;
       }
-      char *bio_fichier = strtok(NULL, "\n");
+      char *bio_fichier = strtok(NULL, ";");
+      char *amis_fichier = strtok(NULL, "\n");
    }
 
    fclose(fichier);
    return trouve;
 }
 
-static void enregistrerPseudo(const char *pseudo, const char *bio)
+static void enregistrerPseudo(const char *pseudo)
 {
    FILE *fichier = fopen("users.csv", "a");
    if(fichier == NULL)
@@ -116,9 +117,171 @@ static void enregistrerPseudo(const char *pseudo, const char *bio)
       perror("Erreur d'ouverture du fichier users.csv");
       return;
    }
-   fprintf(fichier, "%s,%s\n", pseudo, bio);
+   fprintf(fichier, "%s;;\n", pseudo);
    fclose(fichier);
 }
+
+void ajouter_ami(Client *c, Client *ami)
+{
+   
+
+   for(int i = 0; i < c->nb_friends; i++)
+   {
+      if(c->friends[i] == ami)
+      {
+         return; // L'ami est déjà dans la liste
+      }
+   }
+
+   Client **new_friends = realloc(c->friends, (c->nb_friends + 1) * sizeof(Client*));
+   if(new_friends == NULL)
+   {
+      perror("Erreur d'allocation mémoire pour la liste d'amis");
+      return;
+   }
+   c->friends = new_friends;
+   c->friends[c->nb_friends++] = ami;
+
+   Client **new_friends_ami = realloc(ami->friends, (ami->nb_friends + 1) * sizeof(Client*));
+   if(new_friends_ami == NULL)
+   {
+      perror("Erreur d'allocation mémoire pour la liste d'amis");
+      return;
+   }
+   ami->friends = new_friends_ami;
+   ami->friends[ami->nb_friends++] = c;
+
+
+   FILE *fichier = fopen("users.csv", "r");
+   if(fichier == NULL)
+   {
+      perror("Erreur d'ouverture du fichier users.csv");
+      return;
+   }
+
+   FILE *fichierTemp = fopen("temp.csv", "w");
+   if(fichierTemp == NULL)
+   {
+      perror("Erreur d'ouverture du fichier temporaire");
+      fclose(fichier);
+      return;
+   }
+
+   char ligne[BUF_SIZE];
+   while(fgets(ligne, sizeof(ligne), fichier) != NULL)
+   {
+      char *pseudo_fichier = strtok(ligne, ";");
+      char *bio_fichier = strtok(NULL, ";");
+      char *amis_fichier = strtok(NULL, "\n");
+
+      if(pseudo_fichier != NULL && strcmp(pseudo_fichier, c->name) == 0)
+      {
+         fprintf(fichierTemp, "%s;%s;", pseudo_fichier, bio_fichier);
+         for(int i = 0; i < c->nb_friends; i++)
+         {
+            fprintf(fichierTemp, "%s", c->friends[i]->name);
+            if(i < c->nb_friends - 1)
+            {
+               fprintf(fichierTemp, ",");
+            }
+         }
+         fprintf(fichierTemp, "\n");
+      }
+      else if(pseudo_fichier != NULL && strcmp(pseudo_fichier, ami->name) == 0)
+      {
+         fprintf(fichierTemp, "%s;%s;", pseudo_fichier, bio_fichier);
+         for(int i = 0; i < ami->nb_friends; i++)
+         {
+            fprintf(fichierTemp, "%s", ami->friends[i]->name);
+            if(i < ami->nb_friends - 1)
+            {
+               fprintf(fichierTemp, ",");
+            }
+         }
+         fprintf(fichierTemp, "\n");
+      }
+      else
+      {
+         fprintf(fichierTemp, "%s;%s;%s\n", pseudo_fichier, bio_fichier, amis_fichier);
+      }
+   }
+
+   fclose(fichier);
+   fclose(fichierTemp);
+
+   remove("users.csv");
+   rename("temp.csv", "users.csv");
+}
+
+void supprimer_ami(Client *c, Client *ami)
+{
+   int index = -1;
+   for(int i = 0; i < c->nb_friends; i++)
+   {
+      if(c->friends[i] == ami)
+      {
+         index = i;
+         break;
+      }
+   }
+   if(index < 0) return;
+
+   for(int i = index; i < c->nb_friends - 1; i++)
+   {
+      c->friends[i] = c->friends[i + 1];
+   }
+   c->nb_friends--;
+   c->friends = realloc(c->friends, c->nb_friends * sizeof(Client*));
+
+   FILE *fichier = fopen("users.csv", "r");
+   if(fichier == NULL)
+   {
+      perror("Erreur d'ouverture du fichier users.csv");
+      return;
+   }
+
+   FILE *fichierTemp = fopen("temp.csv", "w");
+   if(fichierTemp == NULL)
+   {
+      perror("Erreur d'ouverture du fichier temporaire");
+      fclose(fichier);
+      return;
+   }
+
+   char ligne[BUF_SIZE];
+   while(fgets(ligne, sizeof(ligne), fichier) != NULL)
+   {
+      char *pseudo_fichier = strtok(ligne, ";");
+      char *bio_fichier = strtok(NULL, ";");
+
+      if(pseudo_fichier != NULL && strcmp(pseudo_fichier, c->name) == 0)
+      {
+         fprintf(fichierTemp, "%s;%s;", pseudo_fichier, bio_fichier);
+         for(int i = 0; i < c->nb_friends; i++)
+         {
+            fprintf(fichierTemp, "%s", c->friends[i]->name);
+            if(i < c->nb_friends - 1)
+            {
+               fprintf(fichierTemp, ",");
+            }
+         }
+         fprintf(fichierTemp, "\n");
+      }
+      else
+      {
+         fprintf(fichierTemp, "%s;%s;\n", pseudo_fichier, bio_fichier);
+      }
+   }
+
+   fclose(fichier);
+   fclose(fichierTemp);
+
+   remove("users.csv");
+   rename("temp.csv", "users.csv");
+
+}
+
+
 
 void modifier_bio(Client *c, const char *bio)
 {
@@ -140,17 +303,18 @@ void modifier_bio(Client *c, const char *bio)
    char ligne[BUF_SIZE];
    while(fgets(ligne, sizeof(ligne), fichier) != NULL)
    {
-      char *pseudo_fichier = strtok(ligne, ",");
+      char *pseudo_fichier = strtok(ligne, ";");
       char *pseudo = c->name;
-      char *bio_fichier = strtok(NULL, "\n");
+      char *bio_fichier = strtok(NULL, ";");
+      char *liste_amis_fichier = strtok(NULL, "\n");
 
       if(pseudo_fichier != NULL && strcmp(pseudo_fichier, pseudo) == 0)
       {
-         fprintf(fichierTemp, "%s,%s\n", pseudo, bio);
+         fprintf(fichierTemp, "%s;%s;%s\n", pseudo, bio, liste_amis_fichier ? liste_amis_fichier : "");
       }
       else
       {
-         fprintf(fichierTemp, "%s,%s\n", pseudo_fichier, bio_fichier);
+         fprintf(fichierTemp, "%s;%s;%s\n", pseudo_fichier, bio_fichier, liste_amis_fichier ? liste_amis_fichier : "");
       }
    }
 
@@ -159,6 +323,49 @@ void modifier_bio(Client *c, const char *bio)
 
    remove("users.csv");
    rename("temp.csv", "users.csv");
+}
+
+void mettre_a_jour_amis(Client *c)
+{
+   FILE *fichier = fopen("users.csv", "r");
+   if(fichier == NULL)
+   {
+      perror("Erreur d'ouverture du fichier users.csv");
+      return;
+   }
+
+   char ligne[BUF_SIZE];
+   while(fgets(ligne, sizeof(ligne), fichier) != NULL)
+   {
+      char *pseudo_fichier = strtok(ligne, ";");
+      char *bio_fichier = strtok(NULL, ";");
+      char *amis_fichier = strtok(NULL, "\n");
+
+      if(pseudo_fichier != NULL && strcmp(pseudo_fichier, c->name) == 0)
+      {
+         c->nb_friends = 0;
+         free(c->friends);
+         c->friends = NULL;
+
+         if(amis_fichier != NULL && strlen(amis_fichier) > 0)
+         {
+            char *ami_name = strtok(amis_fichier, ",");
+            while(ami_name != NULL)
+            {
+               Client *ami_client = client_find(ami_name);
+               if(ami_client != NULL)
+               {
+                  c->friends = realloc(c->friends, (c->nb_friends + 1) * sizeof(Client*));
+                  c->friends[c->nb_friends++] = ami_client;
+               }
+               ami_name = strtok(NULL, ",");
+            }
+         }
+         break;
+      }
+   }
+
+   fclose(fichier);
 }
 
 void mettre_a_jour_bio(Client *c)
@@ -173,8 +380,9 @@ void mettre_a_jour_bio(Client *c)
    char ligne[BUF_SIZE];
    while(fgets(ligne, sizeof(ligne), fichier) != NULL)
    {
-      char *pseudo_fichier = strtok(ligne, ",");
-      char *bio_fichier = strtok(NULL, "\n");
+      char *pseudo_fichier = strtok(ligne, ";");
+      char *bio_fichier = strtok(NULL, ";");
+      char *amis_fichier = strtok(NULL, "\n");
 
       if(pseudo_fichier != NULL && strcmp(pseudo_fichier, c->name) == 0)
       {
@@ -218,11 +426,12 @@ static int register_client(Client *c, const char *name)
    strncpy(c->name, name, NAME_SIZE - 1);
    if(!recherchePseudo(c->name))
    {
-      enregistrerPseudo(c->name, "");
+      enregistrerPseudo(c->name);
    }
    else
    {
       mettre_a_jour_bio(c);
+      mettre_a_jour_amis(c);
    }
 
    send_to(c, "Bienvenue %s ! Tapez /help pour la liste des commandes.", c->name);
